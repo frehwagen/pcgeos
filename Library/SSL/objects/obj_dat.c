@@ -77,11 +77,11 @@
 #ifndef NOPROTO
 int sn_cmp(ASN1_OBJECT **a, ASN1_OBJECT **b);
 int ln_cmp(ASN1_OBJECT **a, ASN1_OBJECT **b);
-int obj_cmp(ASN1_OBJECT **a, ASN1_OBJECT **b);
+int obj_cmp2(ASN1_OBJECT **a, ASN1_OBJECT **b);
 #else
 int sn_cmp();
 int ln_cmp();
-int obj_cmp();
+int obj_cmp2();
 #endif
 
 #define ADDED_DATA	0
@@ -437,7 +437,7 @@ ASN1_OBJECT *a;
 		if (adp != NULL) {POPDS;return (adp->obj->nid);}
 		}
 	op=(ASN1_OBJECT **)OBJ_bsearch((char *)&a,(char *)obj_objs,NUM_OBJ,
-		sizeof(ASN1_OBJECT *),(int (*)())obj_cmp);
+		sizeof(ASN1_OBJECT *),(int (*)())obj_cmp2);
 	if (op == NULL)
 		{POPDS;return(NID_undef);}
 	POPDS;
@@ -529,7 +529,7 @@ char *s;
 #pragma code_seg(FixedCallbacks)
 #endif
 
-int obj_cmp(ap, bp)
+int obj_cmp2(ap, bp)
 ASN1_OBJECT **ap;
 ASN1_OBJECT **bp;
 	{

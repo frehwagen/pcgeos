@@ -20,7 +20,7 @@ REVISION HISTORY:
 
 DESCRIPTION:
 
-	
+
 
 	$Id: prntscan.c,v 1.1 97/04/18 11:22:57 dbaumann Exp $
 
@@ -86,7 +86,29 @@ DESCRIPTION:
 #include <limits.h>		/* for setting level to INT_MIN */
 #include <math.h>		/* for modf() */
 
-/* XXX: I'm too lazy to do these correctly, for now.  Feel free to 
+/* XXX: I'm too lazy to do these correctly, for now.  Feel free to
+   come flame me for forgetting to implement them later. */
+#define isinf(x) (0)
+#define isnan(x) (0)
+#endif
+
+#ifdef __WATCOMC__
+/* In WATCOM C (at least under WinNT), the FILE structure is not the
+   same as the Unix/MetaC one.  So here's some hacks to make it look
+   more compatible.  We're still going to have to set "level" as well,
+   see below...  */
+//#define _cnt	bsize
+#define _base	_ptr
+//#define _ptr	curp
+//#define _flag	flags
+#define _file	_handle
+#define _bufsiz	_bufsize
+#define _IOSTRG (0)
+#define _IOWRT	_WRITE
+#include <limits.h>		/* for setting level to INT_MIN */
+#include <math.h>		/* for modf() */
+
+/* XXX: I'm too lazy to do these correctly, for now.  Feel free to
    come flame me for forgetting to implement them later. */
 #define isinf(x) (0)
 #define isnan(x) (0)
@@ -112,8 +134,13 @@ extern char *strncpy(char *dest, const char *src, size_t maxlen);
 void
 __snprintf(unsigned char *str, int size, const char *fmt, va_list args)
 {
+	
+# if defined(sun) || defined(__HIGHC__) || defined(__WATCOMC__)
+    vsprintf(str, fmt, args);
+# else
+
     FILE	junk;
-    
+
     junk._flag = _IOWRT + _IOSTRG;
     junk._base = junk._ptr = str;
 #if !defined(__HIGHC__) && !defined(__BORLANDC__)
@@ -124,13 +151,13 @@ __snprintf(unsigned char *str, int size, const char *fmt, va_list args)
 #endif
     junk._cnt = size-1;
     junk._file = -1;
-    
+
 # if defined(sun) || defined(__HIGHC__) || defined(__BORLANDC__) || defined(_WIN32)
     vfprintf(&junk, fmt, args);
 # else
     _doprnt(fmt, args, &junk);
 # endif
-    
+
     /*
      * Null-terminate, upping _cnt in case vfprintf filled up all the space
      * it was allowed to fill (lets us stick in the final null, for which
@@ -138,10 +165,11 @@ __snprintf(unsigned char *str, int size, const char *fmt, va_list args)
      */
     junk._cnt++;
     putc('\0', &junk);
+#endif
 }
 
 void
-ntcCellsToChars(unsigned char *result, ntcCell *from, int units) 
+ntcCellsToChars(unsigned char *result, ntcCell *from, int units)
 {
     int i;
 
@@ -151,7 +179,7 @@ ntcCellsToChars(unsigned char *result, ntcCell *from, int units)
 }
 
 void
-charsToNtcCells(ntcCell *result, unsigned char *from, int units) 
+charsToNtcCells(ntcCell *result, unsigned char *from, int units)
 {
     int i;
 
@@ -161,7 +189,7 @@ charsToNtcCells(ntcCell *result, unsigned char *from, int units)
 }
 
 int
-strlenWide(ntcCell *str) 
+strlenWide(ntcCell *str)
 {
     int i;
 
@@ -201,7 +229,7 @@ _sprintw(WINDOW *win, const char *fmt, va_list args)
     bool 	  	fancy;
 
     cpStart = cp = fmt;
-    
+
     while (*cp != '\0') {
 	if (*cp != '%') {
 	    cp++;
@@ -210,7 +238,7 @@ _sprintw(WINDOW *win, const char *fmt, va_list args)
 		waddch(win, *cpStart++);
 	    }
 	    cp++;
-	    nextArgs = args;
+	    va_copy(nextArgs, args);
 	    fancy = FALSE;
 	charswitch:
 	    switch(*cp) {
@@ -245,7 +273,7 @@ _sprintw(WINDOW *win, const char *fmt, va_list args)
 		}
 		fancy = TRUE;
 		goto charswitch;
-		
+
 	    case 'd':
 		cp++;
 		strncpy(cfmt, cpStart, cp-cpStart);
@@ -254,7 +282,7 @@ _sprintw(WINDOW *win, const char *fmt, va_list args)
 		__snprintf(string, sizeof(string), cfmt, args);
 		waddstr(win, string);
 		break;
-		
+
 	    case 'u':
 	    case 'o':
 	    case 'X':
@@ -266,7 +294,7 @@ _sprintw(WINDOW *win, const char *fmt, va_list args)
 		__snprintf(string, sizeof(string), cfmt, args);
 		waddstr(win, string);
 		break;
-		
+
 	    case 'E':
 	    case 'e':
 	    case 'f':
@@ -288,7 +316,7 @@ _sprintw(WINDOW *win, const char *fmt, va_list args)
 		__snprintf(string, sizeof(string), cfmt, args);
 		waddstr(win, string);
 		break;
-		
+
 	    case 's':
 		cp++;
 		if ((args == nextArgs) && !fancy) {
@@ -308,7 +336,7 @@ _sprintw(WINDOW *win, const char *fmt, va_list args)
 		break;
 	    }
 	    cpStart = cp;
-	    args = nextArgs;
+	    va_copy(args, nextArgs);
 	}
     }
     waddstr(win, (unsigned char *)cpStart);
@@ -324,7 +352,7 @@ strncpyWide(ntcCell *dest, ntcCell *src, int len)
 {
     ntcCell *start = dest;
     ntcCell zeroCell;
-    
+
     makeNtcCell(&zeroCell, '\0');
 
     while(len != 0) {
@@ -347,11 +375,11 @@ _sprintwWide(WINDOW *win, char *fmt, va_list args)
     char    	    	cfmt[64];   	/* Place to which to copy the format*/
     register char	*cp;	    	/* Current position in fmt */
     char		*cpStart;   	/* Start of unprocessed part of fmt */
-    va_list		nextArgs;   	/* End of args for current char */
+    char**		nextArgs;   	/* End of args for current char */
     bool 	  	fancy;
 
     cpStart = cp = fmt;
-    
+
     while (*cp != '\0') {
 	if (*cp != '%') {
 	    cp++;
@@ -395,7 +423,7 @@ _sprintwWide(WINDOW *win, char *fmt, va_list args)
 		}
 		fancy = TRUE;
 		goto charswitch;
-		
+
 	    case 'd':
 		cp++;
 		strncpy(cfmt, cpStart, cp-cpStart);
@@ -404,7 +432,7 @@ _sprintwWide(WINDOW *win, char *fmt, va_list args)
 		__snprintf(string, sizeof(string), cfmt, args);
 		waddstr(win, string);
 		break;
-		
+
 	    case 'u':
 	    case 'o':
 	    case 'X':
@@ -416,7 +444,7 @@ _sprintwWide(WINDOW *win, char *fmt, va_list args)
 		__snprintf(string, sizeof(string), cfmt, args);
 		waddstr(win, string);
 		break;
-		
+
 	    case 'E':
 	    case 'e':
 	    case 'f':
@@ -438,7 +466,7 @@ _sprintwWide(WINDOW *win, char *fmt, va_list args)
 		__snprintf(string, sizeof(string), cfmt, args);
 		waddstr(win, string);
 		break;
-		
+
 	    case 's':
 		cp++;
 		if ((args == nextArgs) && !fancy) {
@@ -481,7 +509,7 @@ _sprintwWide(WINDOW *win, ntcCell *fmt, va_list args)
     ntcCell		temp;
 
     cpStart = cp = fmt;
-    
+
     while (sameNtcCell(cp, makeNtcCell(&temp, '\0')) == FALSE) {
 	if (sameNtcCell(cp, makeNtcCell(&temp, '%')) == FALSE) {
 	    cp++;
@@ -526,7 +554,7 @@ _sprintwWide(WINDOW *win, ntcCell *fmt, va_list args)
 		}
 		fancy = TRUE;
 		goto charswitch;
-		
+
 	    case (unsigned short)'d':
 		cp++;
 		strncpyWide(cfmt, cpStart, cp-cpStart);
@@ -535,7 +563,7 @@ _sprintwWide(WINDOW *win, ntcCell *fmt, va_list args)
 		__snprintfWide(string, sizeof(string), cfmt, args);
 		waddstrWide(win, string);
 		break;
-		
+
 	    case (unsigned short)'u':
 	    case (unsigned short)'o':
 	    case (unsigned short)'X':
@@ -547,7 +575,7 @@ _sprintwWide(WINDOW *win, ntcCell *fmt, va_list args)
 		__snprintfWide(string, sizeof(string), cfmt, args);
 		waddstrWide(win, string);
 		break;
-		
+
 	    case (unsigned short)'E':
 	    case (unsigned short)'e':
 	    case (unsigned short)'f':
@@ -569,7 +597,7 @@ _sprintwWide(WINDOW *win, ntcCell *fmt, va_list args)
 		__snprintfWide(string, sizeof(string), cfmt, args);
 		waddstrWide(win, string);
 		break;
-		
+
 	    case (unsigned short)'s':
 		cp++;
 		if ((args == nextArgs) && !fancy) {
@@ -601,7 +629,7 @@ _sprintwWide(WINDOW *win, ntcCell *fmt, va_list args)
 /* Printw(fmt,args) does a printf() in stdscr.			*/
 /****************************************************************/
 
-int	
+int
 printw(char *fmt, double A1, double A2, double A3, double A4, double A5)
 {
     sprintf(printscanbuf,fmt,A1,A2,A3,A4,A5);
@@ -618,7 +646,7 @@ wprintw(WINDOW *win, char *fmt, ...)
 {
     va_list	args;
     int		res;
-    
+
     va_start(args, fmt);
     res = _sprintw(win, fmt, args);
     va_end(args);
@@ -630,7 +658,7 @@ wprintwWide(WINDOW *win, char *fmt, ...)
 {
     va_list	args;
     int		res;
-    
+
     va_start(args, fmt);
     res = _sprintwWide(win, fmt, args);
     va_end(args);
@@ -642,14 +670,14 @@ wprintwWide(WINDOW *win, char *fmt, ...)
 /* tion, then does a printf() in stdscr.			*/
 /****************************************************************/
 
-int	
+int
 mvprintw(int y, int x, char *fmt, double A1, double A2,
 	 double A3, double A4, double A5)
 {
     if (wmove(stdscr,y,x) == ERR)
 	return(ERR);
     sprintf(printscanbuf,fmt,A1,A2,A3,A4,A5);
-    
+
     if(waddstr(stdscr,(unsigned char *)printscanbuf) == ERR)
 	return(ERR);
     return(pblen());
@@ -660,15 +688,15 @@ mvprintw(int y, int x, char *fmt, double A1, double A2,
 /* a new position, then does a printf() in window 'win'.	*/
 /****************************************************************/
 
-int	
+int
 mvwprintw(WINDOW *win, int y, int x, char *fmt,
 	  double A1, double A2, double A3, double A4, double A5)
 {
     if (wmove(win,y,x) == ERR)
 	return(ERR);
-    
+
     sprintf(printscanbuf,fmt,A1,A2,A3,A4,A5);
-    
+
     if(waddstr(win, (unsigned char *)printscanbuf) == ERR)
 	return(ERR);
     return(pblen());
@@ -680,7 +708,7 @@ mvwprintw(WINDOW *win, int y, int x, char *fmt,
 /* and put them in the variables pointed to the arguments.	*/
 /****************************************************************/
 
-int 
+int
 wscanw(WINDOW *win, char *fmt, double A1, double A2, double A3,
        double A4, double A5)
 {
@@ -696,7 +724,7 @@ wscanw(WINDOW *win, char *fmt, double A1, double A2, double A3,
 /* in the variables pointed to the arguments.			*/
 /****************************************************************/
 
-int 
+int
 scanw(char *fmt, double A1, double A2, double A3, double A4, double A5)
 {
     wrefresh(stdscr);				/* set cursor */
@@ -712,7 +740,7 @@ scanw(char *fmt, double A1, double A2, double A3, double A4, double A5)
 /* variables pointed to the arguments.				*/
 /****************************************************************/
 
-int 
+int
 mvscanw(int y, int x, char *fmt, double A1, double A2,
 	double A3, double A4, double A5)
 {
@@ -731,7 +759,7 @@ mvscanw(int y, int x, char *fmt, double A1, double A2,
 /* in the variables pointed to the arguments.			*/
 /****************************************************************/
 
-int 
+int
 mvwscanw(WINDOW *win, int y, int x, char *fmt,
 	 double A1, double A2, double A3, double A4, double A5)
 {
@@ -747,11 +775,11 @@ mvwscanw(WINDOW *win, int y, int x, char *fmt,
 /* Pblen() returns the length of the string in printscanbuf.	*/
 /****************************************************************/
 
-static	int 
+static	int
 pblen(void)
 {
     char *p = printscanbuf;
-    
+
     while(*p++);
     return((int) (p - printscanbuf - 1));
 } /* plben */

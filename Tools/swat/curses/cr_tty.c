@@ -15,7 +15,9 @@ static char sccsid[] = "@(#)cr_tty.c	5.2 (Berkeley) 11/8/85";
 
 # include	"curses.ext"
 
-#if !defined(_MSDOS)
+#if !defined(_MSDOS) 
+#include <sys/ioctl.h>
+
 static bool	*sflags[] = {
 			&AM, &BS, &DA, &DB, &EO, &HC, &HZ, &IN, &MI,
 			&MS, &NC, &NS, &OS, &UL, &XB, &XN, &XT, &XS,
@@ -49,7 +51,7 @@ short	ospeed = -1;
 static int	destcol, destline;
 
 gettmode() {
-
+#ifndef _LINUX
 	if (gtty(_tty_ch, &_tty) < 0)
 		return;
 	savetty();
@@ -62,6 +64,7 @@ gettmode() {
 	NONL = ((_tty.sg_flags & CRMOD) == 0);
 	_tty.sg_flags &= ~XTABS;
 	stty(_tty_ch, &_tty);
+#endif
 
 # ifdef DEBUG
 	fprintf(outf, "GETTMODE: UPPERCASE = %s\n", UPPERCASE ? "TRUE":"FALSE");
@@ -129,6 +132,8 @@ reg char	*type; {
 	if (IC && EI==NULL) EI="";
 	if (!GT) BT=NULL;	/* If we can't tab, we can't backtab either */
 
+	if (unknown)
+		return ERR;
 	if (tgoto(CM, destcol, destline)[0] == 'O')
 		CA = FALSE, CM = 0;
 	else
@@ -137,8 +142,6 @@ reg char	*type; {
 	PC = _PC ? _PC[0] : FALSE;
 	strncpy(ttytype, longname(genbuf, type), TTYTYPESIZ - 1);
 	ttytype[TTYTYPESIZ - 1] = '\0';
-	if (unknown)
-		return ERR;
 	return OK;
 }
 

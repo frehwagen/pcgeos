@@ -46,7 +46,7 @@ static char *rcsid =
 
 #if defined(unix)
 # include <sys/dir.h>
-#else 
+#else
 # if defined(_WIN32)
 #  undef FIXED
 #  undef LONG
@@ -71,14 +71,14 @@ static char *rcsid =
 #include <compat/file.h>
 #include <compat/stdlib.h>
 
-#if defined(_MSDOS) || defined(_WIN32)
+#if defined(_MSDOS) /* || defined(_WIN32) */
 # include <share.h>
 # include <dir.h>
 #endif
 
 #if defined(_MSDOS)
 # include <stat.h>
-#else 
+#else
 # include <sys/stat.h>
 #endif
 
@@ -96,7 +96,7 @@ static char *rcsid =
 #endif
 
 #if defined(_MSDOS) || defined(_WIN32)
-# define CONFIG_SUFFIX "cfg"
+# define CONFIG_SUFFIX "conf"
 #else
 # define CONFIG_SUFFIX "conf"
 #endif
@@ -109,7 +109,7 @@ extern  int COLS;
  	/* used in FileGeodeMatches */
 static	    Boolean 	userAsked = FALSE;
 
-int	    fileNumTypes=0; 	/* Number of geode types for which paths
+long int	    fileNumTypes=0; 	/* Number of geode types for which paths
 				 * are defined */
 CONST char  **fileDirs;	    	/* Pointers to the paths for the various
 				 * types */
@@ -124,7 +124,7 @@ char	fileBranch[100];   	/* Branch the user is using */
 
 char	    cwd[1024];	    	/* Initial working directory */
 #if defined(_WIN32)
-/* 
+/*
  * set aside space for the above strings
  */
 char	    fileRootAlloc[1024];
@@ -155,7 +155,7 @@ static char *GeodeSearchTree (
 
 static int strncmp_path(char *path1, char *path2, int n);
 
-#if defined(unix)
+#if defined(unix) || defined(_LINUX)
 # define STRNCMP_OS_SPECIFIC strncmp
 # define STRCMP_OS_SPECIFIC strcmp
 #elif defined(_WIN32)
@@ -180,7 +180,7 @@ static int strncmp_path(char *path1, char *path2, int n);
  * RETURN:	    dynamically-allocated result
  * SIDE EFFECTS:    none
  *
- * STRATEGY:	    
+ * STRATEGY:
  *
  * REVISION HISTORY:
  *	Name	Date		Description
@@ -218,8 +218,8 @@ File_PathConcat (CONST char *first, ...)
 	 * separator, make room to store the separator (or final null, if
 	 * this is the final component)
 	 */
-	if ((cplen > 0) 
-	    && (cp[cplen-1] != '/') 
+	if ((cplen > 0)
+	    && (cp[cplen-1] != '/')
 #if !defined(unix)
 	    && (cp[cplen-1] != '\\')
 #endif
@@ -252,8 +252,8 @@ File_PathConcat (CONST char *first, ...)
 	 * If the component is non-empty and doesn't end in the separator,
 	 * store the separator at the end.
 	 */
-	if ((cplen > 0) 
-	    && (cp2[-1] != '/') 
+	if ((cplen > 0)
+	    && (cp2[-1] != '/')
 #if !defined(unix)
 	    && (cp2[-1] != '\\')
 #endif
@@ -262,7 +262,7 @@ File_PathConcat (CONST char *first, ...)
 	    *cp2++ = PATHNAME_SLASH;
 #else
 	    *cp2++ = (strchr(cp, '/') != NULL) ? '/' : '\\';
-#endif		
+#endif
 	}
     }
 
@@ -297,7 +297,7 @@ File_PathConcat (CONST char *first, ...)
 
     return(result);
 }
-    
+
 
 #if defined(_MSDOS) || defined(_WIN32)
 /***********************************************************************
@@ -309,7 +309,7 @@ File_PathConcat (CONST char *first, ...)
  * SIDE EFFECTS:    all occurrences of the one separator are changed to
  *	    	    	the other within the passed string.
  *
- * STRATEGY:	    
+ * STRATEGY:
  *
  * REVISION HISTORY:
  *	Name	Date		Description
@@ -340,7 +340,7 @@ FileMapSeparators(char *path, char from, char to)
  * SIDE EFFECTS:    result string is set(space must already be allocated)
  *
  * STRATEGY:	    replace /staff, but if no registry entry for what to
- *		    substitute it with, use defaultSubst, else return 
+ *		    substitute it with, use defaultSubst, else return
  *		    FALSE
  *
  * REVISION HISTORY:
@@ -360,7 +360,7 @@ File_MapUnixToDos(char *dosPath, CONST char *unixPath,
     if (strncmp(unixPath, "/staff", 6) != 0) {
 	return FALSE;
     }
-    
+
     fileStaffPath = Tcl_GetVar(interp, "file-staff-path", TRUE);
     if (*fileStaffPath == '\0') {
 	if ((defaultSubst == NULL) || (defaultSubst[0] == '\0')) {
@@ -375,7 +375,7 @@ File_MapUnixToDos(char *dosPath, CONST char *unixPath,
     } else {
 	strcpy(prefix, fileStaffPath);
     }
-    /* 
+    /*
      * now we have a subst string, we need to check for a slash
      * at the end of the string and get rid of it if there
      */
@@ -440,7 +440,7 @@ FileAskUser(CONST char 	*name,	    /* Name of patient */
 	return((char *)NULL);
     }
 }
-	    
+
 #if !defined(_MSDOS) && !defined(_WIN32)
 # define GYM_CHAR 'g'
 # define SYM_CHAR 's'
@@ -504,7 +504,7 @@ FileGeodeMatches(char	    *filePath,  /* File to check */
     path = (char *)malloc((strlen(filePath) + 5) * sizeof(char));
     strcpy(path, filePath);
 
-    suffix = rindex(path, '.');    
+    suffix = rindex(path, '.');
     if (suffix == NULL) {
 	suffix = path + strlen(path);
 	osuff[0] = '\0';
@@ -528,7 +528,7 @@ FileGeodeMatches(char	    *filePath,  /* File to check */
 #if defined(_WIN32)
 	if ((tolower(cp) == tolower(GYM_CHAR))
 	    && ((suffix - path) > 2)
-	    && !(STRNCMP_OS_SPECIFIC(&suffix[-2], "c", 1)) 
+	    && !(STRNCMP_OS_SPECIFIC(&suffix[-2], "c", 1))
 	    && !(STRNCMP_OS_SPECIFIC(&suffix[-3], "e", 1))) {
 #else
 # if defined(_MSDOS)
@@ -550,7 +550,7 @@ FileGeodeMatches(char	    *filePath,  /* File to check */
 
     if (returnCode == TRUE) {
 	haveGeode = 1;
-	(void)FileUtil_Seek(fd, offsetof(GeodeHeader2, geodeFileType), 
+	(void)FileUtil_Seek(fd, offsetof(GeodeHeader2, geodeFileType),
 			    SEEK_SET);
 	(void)FileUtil_Read(fd, (char *)&gn, sizeof(gn), &numRead);
 	(void)FileUtil_Close(fd);
@@ -582,13 +582,13 @@ FileGeodeMatches(char	    *filePath,  /* File to check */
 	 */
 	if (!haveGeode || gn.serial != serial) {
 	    /* try reading the serial number from the user notes of
-	     * the symbol file 
+	     * the symbol file
 	     */
-	    (void)FileUtil_Seek(fd, offsetof(GeosFileHeader2, userNotes), 
+	    (void)FileUtil_Seek(fd, offsetof(GeosFileHeader2, userNotes),
 				SEEK_SET);
 	    (void)FileUtil_Read(fd, permName, sizeof(permName), &numRead);
 	    /* the first 17 characters are the permanent name followed
-	     * by a colon 
+	     * by a colon
 	     */
 	    if (!STRNCMP_OS_SPECIFIC(permName, name, (ignoreSymSerial) ? 12 : 8)) {
 	    if (ignoreSymSerial)
@@ -626,15 +626,15 @@ FileGeodeMatches(char	    *filePath,  /* File to check */
 	notEC=0;
     }
 
-    /* 
-     * if cp == GYM_CHAR we have already opened the gym file 
+    /*
+     * if cp == GYM_CHAR we have already opened the gym file
      */
 #if defined(_WIN32)
     if (tolower(cp) != tolower(GYM_CHAR)) {
 #else
     if (cp != GYM_CHAR) {
 #endif
-	returnCode = FileUtil_Open(&fd, path, O_RDONLY|O_BINARY, 
+	returnCode = FileUtil_Open(&fd, path, O_RDONLY|O_BINARY,
 				  SH_DENYWR, 0);
     }
     if (returnCode == FALSE) {
@@ -646,7 +646,7 @@ FileGeodeMatches(char	    *filePath,  /* File to check */
     }
     /* we are dealing with a gym file, read in the pernament name and
      * serial number from the user notes field
-     * the permanent name must be right to use a gym file, we don't care 
+     * the permanent name must be right to use a gym file, we don't care
      * about the serial number (so just use first 12 characters)
      */
     (void)FileUtil_Seek(fd, offsetof(GeosFileHeader2, userNotes), SEEK_SET);
@@ -704,7 +704,7 @@ FileExeMatches(char 	*path,
     FileType   fd;
     char       *suffix;
     int        returnCode;
-    int        numRead = 0;
+    long int        numRead = 0;
     char       *cpyofpath;
 
     cpyofpath = (char *)malloc(strlen(path) + 4);
@@ -726,11 +726,12 @@ FileExeMatches(char 	*path,
     returnCode = FileUtil_Open(&fd, cpyofpath, O_RDONLY|O_BINARY, SH_DENYWR, 0);
 
     if (returnCode == TRUE) {
+	
 	/*
 	 * Fetch out the checksum while we've got the file open.
 	 */
 	(void)FileUtil_Seek(fd, EXE_CSUM_OFF, SEEK_SET);
-	(void)FileUtil_Read(fd, (char *)&csum, sizeof(csum), &numRead);
+	(void)FileUtil_Read(fd, (unsigned char *)&csum, sizeof(csum), &numRead);
 	(void)FileUtil_Close(fd);
     }
 
@@ -750,7 +751,7 @@ FileExeMatches(char 	*path,
     suffix[1] = 'y';
     suffix[2] = 'm';
     suffix[3] = '\0';
-	
+
     if ((access(cpyofpath, R_OK) < 0) || (serial != csum)) {
 	suffix[0] = GYM_CHAR;
 	if (access(cpyofpath, R_OK) < 0) {
@@ -763,10 +764,10 @@ FileExeMatches(char 	*path,
 	} else {
 	    char    ln[9];
 
-	    returnCode = FileUtil_Open(&fd, cpyofpath, O_RDONLY|O_BINARY, 
+	    returnCode = FileUtil_Open(&fd, cpyofpath, O_RDONLY|O_BINARY,
 				       SH_DENYWR, 0);
 	    if (returnCode == TRUE) {
-		(void)FileUtil_Seek(fd, offsetof(GeosFileHeader2, longName), 
+		(void)FileUtil_Seek(fd, offsetof(GeosFileHeader2, longName),
 				    SEEK_SET);
 		(void)FileUtil_Read(fd, ln, 8, &numRead);
 		(void)FileUtil_Close(fd);
@@ -784,9 +785,9 @@ FileExeMatches(char 	*path,
 	    }
 	    free(cpyofpath);
 	    return (NO);
-	}		
+	}
     }
-    free(cpyofpath);	
+    free(cpyofpath);
     return(YES);
 }
 
@@ -827,7 +828,7 @@ FileCheckHack(CONST char    *dir,   	    /* Top-level directory */
      * permanent name.
      */
     (void)strcpy(path, dir);
-    
+
     cp = &path[strlen(path)];
     *cp++ = PATHNAME_SLASH;
     cp2 = name;
@@ -966,7 +967,7 @@ FileSearchTree(CONST char    	*dir,       /* Directory to search */
     int	    	    uiInterrupt=0; /* hold value from UI_Interrupt */
 
 #if defined(_WIN32)
-	/* 
+	/*
 	 * problem: WIN32 opendir returns NULL when passed path+filename,
 	 * instead of a directory with only the file.  Soln, strip off file
 	 * name and have it search all files.  Slower of course.  Doesn't
@@ -974,7 +975,7 @@ FileSearchTree(CONST char    	*dir,       /* Directory to search */
 	 */
 
         char *cpDot, *cpSlash1, *cpSlash2, *cpSlash;
-    
+
 	cpDot = strrchr(dir, '.');
 	if (cpDot != NULL) {
 	    MessageFlush("...");
@@ -994,7 +995,7 @@ FileSearchTree(CONST char    	*dir,       /* Directory to search */
 	    }
 	}
 #endif
-	
+
     dirp = opendir(dir);
     if (dirp == (DIR *)NULL) {
 	return((char *)NULL);
@@ -1012,14 +1013,14 @@ FileSearchTree(CONST char    	*dir,       /* Directory to search */
      * be able to interrupt the search, though.
      */
 
-    for (dp = readdir(dirp); 
-	 dp != 0 && !(uiInterrupt=Ui_Interrupt()); 
+    for (dp = readdir(dirp);
+	 dp != 0 && !(uiInterrupt=Ui_Interrupt());
 	 dp = readdir(dirp)) {
 #if !defined(_WIN32)
 	if (dp->d_fileno == 0) {
 	    continue;
 	}
-	for (suffix = dp->d_name+dp->d_namlen;
+	for (suffix = dp->d_name+strlen(dp->d_name);
 #else
 	if ((strcmp(dp->d_name, ".") == 0) ||
 	    (strcmp(dp->d_name, "..") == 0)) {
@@ -1044,7 +1045,7 @@ FileSearchTree(CONST char    	*dir,       /* Directory to search */
 		     */
 		    cp = (char *)malloc_tagged(strlen(path)+1, TAG_PNAME);
 		    strcpy(cp, path);
-			
+
 		    closedir(dirp);
 		    return(cp);
 		}
@@ -1076,7 +1077,7 @@ FileSearchTree(CONST char    	*dir,       /* Directory to search */
 	if (dp->d_fileno == 0) {
 	    continue;
 	}
-	for (suffix = dp->d_name+dp->d_namlen;
+	for (suffix = dp->d_name+strlen(dp->d_name);
 #else
 	if ((strcmp(dp->d_name, ".") == 0) ||
 	    (strcmp(dp->d_name, "..") == 0)) {
@@ -1101,7 +1102,7 @@ FileSearchTree(CONST char    	*dir,       /* Directory to search */
 		     */
 		    cp = (char *)malloc_tagged(strlen(path)+1, TAG_PNAME);
 		    strcpy(cp, path);
-			
+
 		    closedir(dirp);
 		    return(cp);
 		}
@@ -1134,7 +1135,7 @@ FileSearchTree(CONST char    	*dir,       /* Directory to search */
 	if (dp->d_fileno == 0) {
 	    continue;
 	}
-	for (suffix = dp->d_name+dp->d_namlen;
+	for (suffix = dp->d_name+strlen(dp->d_name);
 #else
 	if ((strcmp(dp->d_name, ".") == 0) ||
 	    (strcmp(dp->d_name, "..") == 0)) {
@@ -1148,7 +1149,7 @@ FileSearchTree(CONST char    	*dir,       /* Directory to search */
 	    ;
 	}
 
-	if ( (suffix <= dp->d_name) &&  
+	if ( (suffix <= dp->d_name) &&
 	     (STRCMP_OS_SPECIFIC(dp->d_name, "Makefile") != 0) &&
 	     (STRCMP_OS_SPECIFIC(dp->d_name, "RCS") != 0) &&
 	     (dp->d_name[0] != '.'))
@@ -1160,7 +1161,7 @@ FileSearchTree(CONST char    	*dir,       /* Directory to search */
 	     */
 	    strcpy(tail, dp->d_name);
 	    cp = FileSearchTree(path, name, serial, want, check, TRUE);
-	    
+
 	    if (cp != (char *)NULL) {
 		/*
 		 * Success! Close this directory and return the result up
@@ -1168,7 +1169,7 @@ FileSearchTree(CONST char    	*dir,       /* Directory to search */
 		 */
 		closedir(dirp);
 		return(cp);
-	    }		    
+	    }
 	}
     }
     /*
@@ -1196,10 +1197,10 @@ FileSearchTree(CONST char    	*dir,       /* Directory to search */
  *	    	    	3 = driver
  *	    	    	4 = loader/other
  * REVISION HISTORY:
- *	Name	Date		Description			     
- *	----	----		-----------			     
- *	jimmy	4/15/94		Initial version			     
- * 
+ *	Name	Date		Description
+ *	----	----		-----------
+ *	jimmy	4/15/94		Initial version
+ *
  *********************************************************************/
 void
 FileCacheSymDir(CONST char *sdfilename, char *name, char *result)
@@ -1208,7 +1209,7 @@ FileCacheSymDir(CONST char *sdfilename, char *name, char *result)
     char      *cp2;
     char      symEntry[GEODE_NAME_SIZE + GEODE_PATH_SIZE + 4];
     int       returnCode;
-    int       numWrit;
+    long int  numWrit;
     char      lastBytes[2];
     long      bytesRead;
 #if defined(_WIN32)
@@ -1223,21 +1224,23 @@ FileCacheSymDir(CONST char *sdfilename, char *name, char *result)
 				   SH_DENYWR, 0666);
 
 	if (returnCode == TRUE)	{
-	    (void)FileUtil_Seek(sdfile, -1L, SEEK_END);
+	    int pos = FileUtil_Seek(sdfile, -1L, SEEK_END);
 	    returnCode = FileUtil_Read(sdfile, lastBytes, 1, &bytesRead);
 	    if (returnCode == TRUE) {
+		(void)FileUtil_Seek(sdfile, pos + 1, SEEK_SET);
+
 		if ((lastBytes[0] != '\n') && (bytesRead > 0)) {
 		    /*
 		     * if there isn't a newline at the end of the last line
 		     * add one now
 		     */
-#if defined(_WIN32)		    
+#if defined(_WIN32)
 		    lastBytes[0] = '\r';
 		    lastBytes[1] = '\n';
-		    (void)FileUtil_Write(sdfile, lastBytes, 2, &numWrit);
+		    (void)FileUtil_Write(sdfile, (unsigned char*) lastBytes, 2, &numWrit);
 #else
 		    lastBytes[0] = '\n';
-		    (void)FileUtil_Write(sdfile, lastBytes, 1, &numWrit);
+		    (void)FileUtil_Write(sdfile, (unsigned char*) lastBytes, 1, &numWrit);
 #endif
 		}
 	    }
@@ -1264,12 +1267,12 @@ FileCacheSymDir(CONST char *sdfilename, char *name, char *result)
 		*cp2 = '\0';
 	    }
 	    if (strlen(result) < GEODE_PATH_SIZE) {
-#if !defined(_WIN32)		
+#if !defined(_WIN32)
 		sprintf(symEntry, "%s %s\n", name, result);
 #else
 		sprintf(symEntry, "%s %s\r\n", name, result);
 #endif
-		(void)FileUtil_Write(sdfile, symEntry, strlen(symEntry), 
+		(void)FileUtil_Write(sdfile, symEntry, strlen(symEntry),
 				     &numWrit);
 		MessageFlush("(cached)...");
 	    }
@@ -1311,7 +1314,7 @@ FileCacheSymDir(CONST char *sdfilename, char *name, char *result)
  * RETURN:	    dynamically-allocated path to the cache file
  * SIDE EFFECTS:    nothing
  *
- * STRATEGY:	    
+ * STRATEGY:
  *
  * REVISION HISTORY:
  *	Name	Date		Description
@@ -1336,15 +1339,15 @@ FileGetLocalSymdirCache(int 	geodeType)
 #endif
 
 #if defined(_WIN32)
-    /* 
+    /*
      * check if the symdir location is to be overridden
      */
     if (symdirDirStatus == SDD_HAVENT_LOOKED) {
-	returnCode = Registry_FindStringValue(Tcl_GetVar(interp, 
+	returnCode = Registry_FindStringValue(Tcl_GetVar(interp,
 							 "file-reg-swat",
 							 TRUE),
 					      "SYMDIR_DIR",
-					      symdirDir, 
+					      symdirDir,
 					      sizeof(symdirDir));
 	if ((returnCode == TRUE) && (symdirDir[0] != '\0')) {
 	    if (access(symdirDir, R_OK | W_OK) == 0) {
@@ -1365,7 +1368,7 @@ FileGetLocalSymdirCache(int 	geodeType)
 	    /*
 	     * 8.3 so modify the filename to conform
 	     */
-	    sprintf(filename, "symdir.%d", geodeType);	
+	    sprintf(filename, "symdir.%d", geodeType);
 	}
 	return(File_PathConcat(symdirDir, filename, 0));
     }
@@ -1376,7 +1379,7 @@ FileGetLocalSymdirCache(int 	geodeType)
 	    /*
 	     * 8.3 so modify the filename to conform
 	     */
-	    sprintf(filename, "symdir.%d", geodeType);	
+	    sprintf(filename, "symdir.%d", geodeType);
 	}
 #endif
 	return(File_PathConcat(fileDevel, filename, 0));
@@ -1404,7 +1407,7 @@ FileGetLocalSymdirCache(int 	geodeType)
  *	    	    NULL if not found
  * SIDE EFFECTS:    none
  *
- * STRATEGY:	    
+ * STRATEGY:
  *
  * REVISION HISTORY:
  *	Name	Date		Description
@@ -1416,7 +1419,7 @@ typedef enum {
     FIND_FILE,
     FIND_GEODE
 } find_mode;
- 
+
 static char *
 FileSearchSymdirCacheInternal(CONST char *sdfilename,	/* Cache file in which
 							 * to search */
@@ -1435,12 +1438,12 @@ FileSearchSymdirCacheInternal(CONST char *sdfilename,	/* Cache file in which
 			      CONST char *usersSdf)	/* if not NULL implies
 							 * parm 1 =.symdir file
 							 * (no # after the r)
-							 * and this parm is 
+							 * and this parm is
 							 * the symdir to store
 							 * the entry in for
 							 * speed-up if win32
 							 */
-{			    
+{
     FileType    	sdfile;
     char    		match[GEODE_NAME_SIZE+GEODE_NAME_EXT_SIZE+4];
     char    		*matchp;
@@ -1454,7 +1457,7 @@ FileSearchSymdirCacheInternal(CONST char *sdfilename,	/* Cache file in which
     char		*wholepathp;
     char    		*result = NULL;
     int	    		indx;
-    int     		bytesRead = 0;
+    long int    bytesRead = 0;
     int			lineNum = 1;
 #if defined(_WIN32)
     char    		pathbuf[GEODE_PATH_SIZE + 1];
@@ -1466,7 +1469,7 @@ FileSearchSymdirCacheInternal(CONST char *sdfilename,	/* Cache file in which
 	len = GEODE_NAME_SIZE;
     }
 
-    /* 
+    /*
      * get the filesize of the symdir
      */
     if (stat(sdfilename, &statbuf) == -1) {
@@ -1488,7 +1491,7 @@ FileSearchSymdirCacheInternal(CONST char *sdfilename,	/* Cache file in which
      * Open the cache file, if we're doing caching.
      */
     if (symCache == TRUE) {
-    	returnCode = FileUtil_Open(&sdfile, sdfilename, O_RDONLY|O_TEXT, 
+    	returnCode = FileUtil_Open(&sdfile, sdfilename, O_RDONLY|O_TEXT,
 				   SH_DENYWR, 0);
 	if ((returnCode == TRUE) && (sdfile != 0)) {
 	    symdirContents = (char *)malloc(symdirFileSize);
@@ -1496,11 +1499,11 @@ FileSearchSymdirCacheInternal(CONST char *sdfilename,	/* Cache file in which
 		(void)FileUtil_Close(sdfile);
 		return FALSE;
 	    }
-	    (void *)FileUtil_Read(sdfile, symdirContents, symdirFileSize, 
+	    (void *)FileUtil_Read(sdfile, symdirContents, symdirFileSize,
 				  &bytesRead);
 	    (void)FileUtil_Close(sdfile);
 	    if (bytesRead != symdirFileSize) {
-		MessageFlush("Problem reading entire symdir file: %s\n", 
+		MessageFlush("Problem reading entire symdir file: %s\n",
 			     sdfilename);
 		free(symdirContents);
 		return FALSE;
@@ -1584,7 +1587,7 @@ FileSearchSymdirCacheInternal(CONST char *sdfilename,	/* Cache file in which
 	    if ((fpos >= symdirFileSize) && (indx == 0)) {
 		break;
 	    }
-	    
+
 	    if (strncmp(match, name, len > 8 ? 8 : len) == 0) {
 		if (mode == FIND_FILE && !strcmp(wholepath, "Ignore")) {
 		    MessageFlush("Ignoring patient (see nuke-symdir-entry "
@@ -1594,7 +1597,7 @@ FileSearchSymdirCacheInternal(CONST char *sdfilename,	/* Cache file in which
 		    }
 		    break;
 		}
-		
+
 #if defined(_MSDOS)
 		{
 		    char *cp;
@@ -1607,12 +1610,12 @@ FileSearchSymdirCacheInternal(CONST char *sdfilename,	/* Cache file in which
 		}
 #endif
 #if defined(_WIN32)
-		/* 
+		/*
 		 * switch from unix to dos file names if necessary
 		 */
 		if (strncmp(wholepath, "/staff", 6) == 0) {
 		    if (File_MapUnixToDos(pathbuf, wholepath, NULL) == FALSE) {
-			/* 
+			/*
 			 * nothing to substitute /staff with, time to give up
 			 */
 			continue;
@@ -1627,7 +1630,7 @@ FileSearchSymdirCacheInternal(CONST char *sdfilename,	/* Cache file in which
 #endif
 		if (mode == FIND_FILE) {
 		    if (strrchr(wholepathp, '.') != NULL) {
-			if ((access(wholepathp, R_OK) == 0) 
+			if ((access(wholepathp, R_OK) == 0)
 			    && ((*check)(wholepathp, name, serial) == YES)) {
 			    result = (char *)malloc_tagged(strlen(wholepathp)+1,
 							   TAG_PNAME);
@@ -1650,7 +1653,7 @@ FileSearchSymdirCacheInternal(CONST char *sdfilename,	/* Cache file in which
 		    result = GeodeSearchTree(wholepathp, name, serial);
 
 		    if (result != NULL) {
-			/* 
+			/*
 			 * this code always checks for a local version of a geode
 			 * if it found a cached installed one, as that's probably
 			 * what the user wants
@@ -1658,7 +1661,7 @@ FileSearchSymdirCacheInternal(CONST char *sdfilename,	/* Cache file in which
 
 			len = strlen(fileRoot);
 			if ((fileDevel != fileRoot) &&
-			    !strncmp_path(result, (char *)fileRoot, len)) 
+			    !strncmp_path(result, (char *)fileRoot, len))
 			{
 			    lpath = File_PathConcat(fileDevel, result+len, 0);
 			    FileMapSeparators((char *)lpath, '/', '\\');
@@ -1679,7 +1682,7 @@ FileSearchSymdirCacheInternal(CONST char *sdfilename,	/* Cache file in which
 			/* lets try the installed dir if that was local */
 			len = strlen(fileDevel);
 			if (!strncmp_path(wholepathp, (char *)fileDevel, len)) {
-			    lpath = File_PathConcat(fileRoot, wholepathp+len, 
+			    lpath = File_PathConcat(fileRoot, wholepathp+len,
 						    0);
 			    result = GeodeSearchTree(lpath, name, serial);
 			    free((void *)lpath);
@@ -1706,11 +1709,11 @@ FileSearchSymdirCacheInternal(CONST char *sdfilename,	/* Cache file in which
 # else   /* else _WIN32 case */
 		    if (usersSdf != NULL) {
 			char namebuf[10];
-			/* 
+			/*
 			 * found it in the .symdir file, now cache it
 			 * in the user's .symdir.# file
 			 */
-			strncpy(namebuf, name, 
+			strncpy(namebuf, name,
 				sizeof(namebuf)/sizeof(namebuf[0]));
 			FileCacheSymDir(usersSdf, namebuf, result);
 		    }
@@ -1736,21 +1739,21 @@ FileSearchSymdirCacheInternal(CONST char *sdfilename,	/* Cache file in which
  *			FileSearchSymdirCache
  *********************************************************************
  * SYNOPSIS: 	check the cache for this geode
- * CALLED BY:	
+ * CALLED BY:
  * RETURN:  	string indictating path or NULL
  * SIDE EFFECTS:
  * STRATEGY:
  * REVISION HISTORY:
- *	Name	Date		Description			     
- *	----	----		-----------			     
- *	jimmy	11/ 9/94	Initial version			     
- * 
+ *	Name	Date		Description
+ *	----	----		-----------
+ *	jimmy	11/ 9/94	Initial version
+ *
  *********************************************************************/
 static char *
 FileSearchSymdirCache(CONST char **sdfilenamePtr,
-		      int geodeType, 
+		      int geodeType,
 		      char *name,
-		      char *want, 
+		      char *want,
 		      FileMatchProc *check,
 		      word serial,
 		      int  *ignore,
@@ -1760,17 +1763,17 @@ FileSearchSymdirCache(CONST char **sdfilenamePtr,
     CONST char *sdfilename;
 
     sdfilename = FileGetLocalSymdirCache(geodeType);
-    cp = FileSearchSymdirCacheInternal(sdfilename, name, want, check, 
+    cp = FileSearchSymdirCacheInternal(sdfilename, name, want, check,
 				       serial, ignore, mode, NULL);
 
-#if defined(unix ) || defined(_WIN32)
+#if defined(unix) || defined(_WIN32) || defined(_LINUX)
     if ((ignore == NULL) || ((cp == NULL) && (! *ignore))) {
 	if (geodeType < fileNumTypes && fileDirs[geodeType*2+1]) {
 	    CONST char *sdf2 = File_PathConcat(fileDirs[geodeType*2+1],
 					       ".symdir",
 					       0);
 	    cp = FileSearchSymdirCacheInternal(sdf2, name, want, check,
-					       serial, ignore, mode, 
+					       serial, ignore, mode,
 					       sdfilename);
 
 	    if (cp != NULL) {
@@ -1781,7 +1784,7 @@ FileSearchSymdirCache(CONST char **sdfilenamePtr,
 	    }
 	}
     }
-#endif /* unix || _WIN32 */
+#endif /* unix || _WIN32 || _LINUX */
 
     if (sdfilenamePtr) {
 	*sdfilenamePtr = sdfilename;
@@ -1835,22 +1838,21 @@ File_FindGeode(char 	*name,  	/* Permanent name (executable name for
 
     MessageFlush("Looking for \"%s\"...", name);
 
-
     if ((geodeType == 0) || (geodeType == 4)) {
 	check = FileExeMatches;     /* loader */
     } else {
 	check = FileGeodeMatches;
 	if  (name[8] == 'E') {
 	    ecGeode = 1;
-	} 
+	}
 	if (!STRNCMP_OS_SPECIFIC(name+8+ecGeode, "spu", 3)) {
 	    /* establish the specific ui in a tcl variable, used in
 	     * the focus, model, target commands to name a few */
 	    Tcl_SetVar(interp, "specific-ui", name, 1);
 	}
     }
-    strcpy(want, sym_ext);	
-    
+    strcpy(want, sym_ext);
+
     /*
      * Try and locate the thing quickly by calling the file-locate-geode
      * TCL function to see if it can do anything when we give it the geode
@@ -1860,7 +1862,7 @@ File_FindGeode(char 	*name,  	/* Permanent name (executable name for
      * trailing spaces removed from both the name and its extension.
      */
     namelen = strlen(name);
-    
+
     if (namelen > GEODE_NAME_SIZE) {
 	/*
 	 * Name has extension so look for trailing spaces on the extension.
@@ -1884,14 +1886,13 @@ File_FindGeode(char 	*name,  	/* Permanent name (executable name for
 	namelen--;
     }
 
-    result = FileSearchSymdirCache(&sdfilename, geodeType, name, want, 
+    result = FileSearchSymdirCache(&sdfilename, geodeType, name, want,
 				    check, serial, &ignore, FIND_FILE);
 
     if (result != NULL || ignore == TRUE) {
 	free((char *)sdfilename);
 	return result;
     }
-
 
     (void)sprintf(match, "%d %.*s.%.*s", geodeType, namelen+1, name,
 		  extlen+1, &name[GEODE_NAME_SIZE]);
@@ -1902,9 +1903,9 @@ File_FindGeode(char 	*name,  	/* Permanent name (executable name for
     	argv[0] = "file-locate-geode";
     }
     argv[1] = match;
-    
+
     cmd = Tcl_Merge(2, argv);
-    
+
     if ((Tcl_Eval(interp, cmd, 0, 0) == TCL_OK) &&
 	(interp->result && *interp->result != '\0'))
     {
@@ -1992,7 +1993,7 @@ File_FindGeode(char 	*name,  	/* Permanent name (executable name for
 	}
 
     	if (!cp) {
-	    cp = FileSearchTree(fileGym, name, serial, (char *)gym_ext, 
+	    cp = FileSearchTree(fileGym, name, serial, (char *)gym_ext,
 				    	check, TRUE);
 	}
 
@@ -2029,7 +2030,7 @@ handleInt:
     Ui_AllowInterrupts(FALSE);
     isKernel = (STRNCMP_OS_SPECIFIC(name, "geos", 4) == 0) ? TRUE : FALSE;
     while((cp = FileAskUser(name, maydetach,
-			    ((geodeType != 0) && (geodeType != 4) 
+			    ((geodeType != 0) && (geodeType != 4)
 			     && !isKernel))) != NULL)
     {
 	userAsked = TRUE;
@@ -2071,14 +2072,14 @@ handleInt:
     }
 
     (void)free((char *)sdfilename);
-    
+
     /*
      * Told to ignore it -- return NULL
      */
     return((char *)NULL);
 }
-	    
-		
+
+
 
 /***********************************************************************
  *				File_Locate
@@ -2103,18 +2104,18 @@ handleInt:
  ***********************************************************************/
 char *
 File_Locate(char	*file,	    /* File name */
-	    char	*path)	    /* Path, formatted as 
+	    char	*path)	    /* Path, formatted as
 				     * <dir1>:<dir2>:...<dirn> */
 {
     char		name[1024]; /* Name buffer */
     int			nameLength; /* Length of 'file' */
     register char    	*cp;	    /* Mobile pointer into path */
     register char	*cp2;	    /* Current position in 'name' */
-    
+
     if ((cp = path) == (char *)NULL) {
 	return((char *)NULL);
     }
-    
+
     nameLength = strlen(file) + 1;
 
     while (1) {
@@ -2122,16 +2123,26 @@ File_Locate(char	*file,	    /* File name */
 	 * Skip to end of current directory, copying it in.
 	 */
 	cp2 = name;
+#ifdef _WIN32
+	while((*cp != ';') && (*cp != '\0')) {
+#else
 	while((*cp != ':') && (*cp != '\0')) {
+#endif
 	    *cp2++ = *cp++;
 	}
 
 	/*
 	 * Make sure the directory ends in a slash
 	 */
+#ifdef _WIN32
+	if (cp2[-1] != '\\') {
+     	    *cp2++ = '\\';
+ 	}
+#else
 	if (cp2[-1] != '/') {
 	    *cp2++ = '/';
 	}
+#endif
 
 	/*
 	 * Copy in the file being sought
@@ -2209,8 +2220,8 @@ GeodeSearchTree (CONST char	*dir,	/* directory to search		   */
 	return((char *)NULL);
     }
 
-    MessageFlush("Searching: %.*s%.*s\r", COLS - 13, dir, 
-		 COLS - (strlen(dir) + 13), 
+    MessageFlush("Searching: %.*s%.*s\r", COLS - 13, dir,
+		 COLS - (strlen(dir) + 13),
 		 "                                                        ");
 
     for (tail = path; *dir != '\0'; *tail++ = *dir++) {
@@ -2229,7 +2240,7 @@ GeodeSearchTree (CONST char	*dir,	/* directory to search		   */
 	if (dp->d_fileno == 0) {
 	    continue;
 	}
-	for (suffix = dp->d_name+dp->d_namlen;
+	for (suffix = dp->d_name+strlen(dp->d_name);
 #else
 	if ((strcmp(dp->d_name, ".") == 0) ||
 	    (strcmp(dp->d_name, "..") == 0)) {
@@ -2253,15 +2264,15 @@ GeodeSearchTree (CONST char	*dir,	/* directory to search		   */
 	    if (STRCMP_OS_SPECIFIC(suffix, GEODE_EXTENSION) == 0) {
 		strcpy(tail, dp->d_name);
 
-		returnCode = FileUtil_Open(&fd, path, O_RDONLY|O_BINARY, 
+		returnCode = FileUtil_Open(&fd, path, O_RDONLY|O_BINARY,
 					  SH_DENYWR, 0);
 
 		if (returnCode == TRUE) {
-		    (void)FileUtil_Seek(fd, 
+		    (void)FileUtil_Seek(fd,
 					offsetof(GeodeHeader2,
-						 geodeFileType), 
+						 geodeFileType),
 					SEEK_SET);
-		    (void)FileUtil_Read(fd, (char *)&gn, sizeof(gn), 
+		    (void)FileUtil_Read(fd, (char *)&gn, sizeof(gn),
 					&numRead);
 		    (void)FileUtil_Close(fd);
 
@@ -2275,7 +2286,7 @@ GeodeSearchTree (CONST char	*dir,	/* directory to search		   */
 			 */
 			cp = (char *)malloc_tagged(strlen(path)+1, TAG_PNAME);
 			strcpy(cp, path);
-			
+
 			closedir(dirp);
 			return(cp);
 		    }
@@ -2291,7 +2302,7 @@ GeodeSearchTree (CONST char	*dir,	/* directory to search		   */
 	     */
 	    strcpy(tail, dp->d_name);
 	    cp = GeodeSearchTree(path, name, bNEC);
-	    
+
 	    if (cp != (char *)NULL) {
 		/*
 		 * Success! Close this directory and return the result up
@@ -2319,10 +2330,10 @@ GeodeSearchTree (CONST char	*dir,	/* directory to search		   */
  * SIDE EFFECTS:
  * STRATEGY:
  * REVISION HISTORY:
- *	Name	Date		Description			     
- *	----	----		-----------			     
- *	jimmy	11/10/94		Initial version			     
- * 
+ *	Name	Date		Description
+ *	----	----		-----------
+ *	jimmy	11/10/94		Initial version
+ *
  *********************************************************************/
 static int strncmp_path(char *path1, char *path2, int n)
 {
@@ -2374,9 +2385,9 @@ Synopsis:\n\
     char geodeName[GEODE_NAME_SIZE+GEODE_NAME_EXT_SIZE+4];
     CONST char *sdfilename;
     int ignore;
-    
+
     if ((argc < 2) || (argc > 3) ||
-	((argc == 3) && (strcmp(argv[1], "-n") != 0))) 
+	((argc == 3) && (strcmp(argv[1], "-n") != 0)))
     {
 	Tcl_Error(interp, "Usage: find-geode [-n] <geode_name>");
     }
@@ -2421,7 +2432,7 @@ Synopsis:\n\
 	    }
 	}
     }
-    
+
     if (cp != NULL) {
 	if (!inCache) {
 	    FileCacheSymDir(sdfilename, geodeName, cp);
@@ -2432,13 +2443,13 @@ Synopsis:\n\
     if (Ui_Interrupt()) {
 	Message("\n");
     }
-	
+
     free((char *)sdfilename);
     return TCL_OK;
 }	/* End of FindGeode.	*/
 
 
-#if defined(unix)
+#if defined(unix) || defined(_LINUX) || defined(_WIN32)
 /***********************************************************************
  *				FileSetVar
  ***********************************************************************
@@ -2496,10 +2507,8 @@ FileSetVar(char	    **var,  	    /* Place to store result */
 	Tcl_SetVar(interp, tclVarName, *var, TRUE);
     }
 }
-#endif /* unix */    
+#endif /* unix */
 
-
-#if !defined(_WIN32)
 /***********************************************************************
  *				FileParseConfigFile
  ***********************************************************************
@@ -2524,7 +2533,7 @@ FileParseConfigFile(CONST char *path)
     FileType  	    cf;	    	/* Stream open to configuration file */
     FileConfigEntry *fce;
     char    	    *cp;
-    int             bytesRead;
+    long int        bytesRead;
     int             indx;
     int             returnCode;
 
@@ -2575,7 +2584,7 @@ FileParseConfigFile(CONST char *path)
 	     */
 	    continue;
 	}
-	
+
 	/*
 	 * Find the end of the initial word
 	 */
@@ -2596,7 +2605,7 @@ FileParseConfigFile(CONST char *path)
 	while(isspace(*cp)) {
 	    cp++;
 	}
-	
+
 	/*
 	 * Locate the end of the argument.
 	 */
@@ -2644,7 +2653,6 @@ FileParseConfigFile(CONST char *path)
     (void)FileUtil_Close(cf);
     return;
 }
-#endif  /* !_WIN32 */
 
 /***********************************************************************
  *				File_FetchConfigData
@@ -2781,32 +2789,12 @@ File_Init(int	    *argcPtr,
     Boolean 	fileerrFound = FALSE;
     int         returnCode;
     char        key[30];
-#if !defined(_WIN32)    
     char    	*cp;	    	/* General pointer */
     int	    	rootLen = 0;    /* Length of root directory */
     CONST char	*value;
-#else  /* WIN32 case */ 
-    long	dbg;
-    char    	workbuf[1024]; 		/* Buffer for doing work stuff */
+#ifdef _WIN32
     char	sdkname[256];		/* name of the sdk in the reg */
-    char	ntsdkRegPos[256];	/* location in registry of ntsdk */
-    char	swatRegPos[256];	/* location in registry of swat */
-    char	fileNumTypesString[256];	/* num types as string */
-
-    fileRoot = fileRootAlloc;
-    fileDefault = fileDefaultAlloc;
-    fileDevel = fileDevelAlloc;
-    fileSysLib = fileSysLibAlloc;
-    fileAbsSysLib = fileAbsSysLibAlloc;
-    fileGym = fileGymAlloc;
-
-    strcpy(sdkname, SDK_NAME);
-    returnCode = Registry_FindStringValue(REG_GEO_NAME, "USE_ALTERNATE_SDK",
-					  workbuf, sizeof(workbuf));
-    if ((returnCode == TRUE) && (workbuf[0] != '\0')) {
-	strcpy(sdkname, workbuf);
-    }
-#endif   /* end of WIN32 case */
+#endif
 
     Message = NULL;
     MessageFlush = NULL;
@@ -2815,7 +2803,7 @@ File_Init(int	    *argcPtr,
     if (argv0++ == NULL) {
 	argv0 = argv[0];
     }
-    
+
     /*
      * Check for flags we support:
      *	-B<branch name>
@@ -2829,9 +2817,7 @@ File_Init(int	    *argcPtr,
 	    argBranch = &av[0][2];
 	    *argcPtr -= 1;
 	} else if (strcmp(*av, "-c") == 0) {
-#if defined(_WIN32)
-	    Punt("-c argument is not permitted under WIN32, use Geostool\n");
-#endif
+
 	    if (ac > 1) {
 		strcpy(buf, av[1]);
 		*argcPtr -= 2;
@@ -2863,7 +2849,6 @@ File_Init(int	    *argcPtr,
 	}
     }
 
-#if !defined(_WIN32)
     if (buf[0] != '\0') {
 	goto read_config;
     }
@@ -2900,7 +2885,7 @@ File_Init(int	    *argcPtr,
     if (access(buf, R_OK) == 0) {
 	goto read_config;
     }
-    
+
     /*
      * Try full path in argv[0] with extension replaced by cfg next.
      */
@@ -2910,7 +2895,7 @@ File_Init(int	    *argcPtr,
     } else {
 	sprintf(buf, "%s." CONFIG_SUFFIX, argv[0]);
     }
-    
+
 # else
     sprintf(buf, "%s." CONFIG_SUFFIX, argv0);
 # endif
@@ -2938,6 +2923,26 @@ File_Init(int	    *argcPtr,
     }
 # endif
 
+#ifdef _WIN32
+    {
+	cp = (char *)getenv("PATH");
+    
+    	if (cp != NULL) {
+    	    sprintf(buf, "%s", argv0);
+	    if((strlen(buf) > 3) && 
+	    		(strncmp(buf + strlen(buf) - 4, ".exe", 4) == 0)) {
+		buf[strlen(buf) - 4] = 0;    
+	    }
+	    strcat(buf, "." CONFIG_SUFFIX);
+    	    cp = File_Locate(buf, cp);
+    	    if (cp != NULL) {
+    		strcpy(buf, cp);
+    		free(cp);
+    		goto read_config;
+    	    }
+    	}
+    }
+#else
     if (argv0 == argv[0]) {
 	cp = (char *)getenv("PATH");
 
@@ -2951,6 +2956,7 @@ File_Init(int	    *argcPtr,
 	    }
 	}
     }
+#endif
 
     strcpy(buf, "swat." CONFIG_SUFFIX);
     if (access(buf, R_OK) != 0) {
@@ -2963,6 +2969,8 @@ read_config:
      * At this point, "buf" contains the path to the configuration file
      */
     FileParseConfigFile(buf);
+
+    
     /*
      * Fetch the root directory of the development tree
      */
@@ -2977,19 +2985,28 @@ read_config:
 	Punt("Root directory must be absolute path");
     }
     rootLen = strlen(fileRoot);
+#if defined(_WIN32)
+    FileMapSeparators((char *)fileRoot, '\\', '/');
+#endif
     Tcl_SetVar(interp, "file-root-dir", fileRoot, TRUE);
 
     /*
      * Find the current directory so we can set up the search paths
      * for geodes.
      */
-# if defined(_MSDOS)
+# if defined(_MSDOS) || defined(_LINUX)
+#ifdef _LINUX
+    if (getcwd(cwd, sizeof(cwd)) == NULL) {
+#else
     if (_getcwd(cwd, sizeof(cwd)) == NULL) {
+#endif
 	Punt("could not fetch current directory");
     }
+#ifndef _LINUX
     atexit(FileRestoreWorkingDir);
+#endif
 # else
-    if (getwd(cwd) == NULL) {
+    if (getcwd(cwd, sizeof(cwd)) == NULL) {
 	Punt("could not fetch current directory");
     }
 # endif
@@ -2997,8 +3014,11 @@ read_config:
     /*
      * Store the initial directory away in the init-directory variable
      */
+#if defined(_WIN32)
+    FileMapSeparators((char *)cwd, '\\', '/');
+#endif
     Tcl_SetVar(interp, "file-init-dir", cwd, TRUE);
-    
+
     fileBranch[0] = '\0';
 
     /*
@@ -3008,9 +3028,12 @@ read_config:
      * we're not in a subdirectory of the root, we have no idea...
      */
 # if !defined(_MSDOS)
+#if defined(_WIN32)
+    	FileMapSeparators((char *)cwd, '\\', '/');
+#endif
     if (STRNCMP_OS_SPECIFIC(cwd, fileRoot, rootLen) == 0) {
 	cp = cwd + rootLen + 1;
-	while(*cp != PATHNAME_SLASH && *cp != '\0') {
+	while(*cp != '/' && *cp != '\0') {
 	    cp++;
 	}
 
@@ -3018,6 +3041,7 @@ read_config:
 	 * Set up the devel-directory variable now too
 	 */
 	*cp = '\0';
+
 	FileSetVar((char **)&fileDevel, "file-devel-dir", cwd, cp);
 
 	/*
@@ -3028,10 +3052,10 @@ read_config:
 	    FileType	cf;
 	    CONST char	*bfile;
 	    int		indx;
-	    int		bytesRead = 0;
+	    long	bytesRead = 0;
 
 	    bfile = File_PathConcat(fileDevel, "BRANCH", 0);
-	    returnCode = FileUtil_Open(&cf, bfile, O_RDONLY|O_TEXT, 
+	    returnCode = FileUtil_Open(&cf, bfile, O_RDONLY|O_TEXT,
 				      SH_DENYWR, 0);
 	    free((char *)bfile);
 
@@ -3068,12 +3092,19 @@ read_config:
 	    strcpy(fileBranch, argBranch);
 	}
     } else {
-	/* XXX: warn if argBranch being ignored */
-	fprintf(stderr, "Current directory (%s) is not under GEOS tree %s\n",
-		cwd, fileRoot);
-	sleep(3);
+	fileDevel = getenv("LOCAL_ROOT");
+        if (fileDevel == NULL) {
+    	    fileDevel = fileRoot;
+	    fprintf(stderr, "Current directory (%s) is not under GEOS tree %s\n",
+			cwd, fileRoot);
+	}
+	else {
+		fprintf(stderr, "Current directory (%s) is not under GEOS tree %s, using LOCAL_ROOT=%s\n",
+        		cwd, fileDevel);
+		
+	}
 
-	fileDevel = (char *)NULL;
+
     }
 # else
 
@@ -3081,6 +3112,10 @@ read_config:
     if (fileDevel == NULL) {
 	fileDevel = fileRoot;
     }
+
+#if defined(_WIN32)
+    FileMapSeparators((char *)fileDevel, '\\', '/');
+#endif
     Tcl_SetVar(interp, "file-devel-dir", fileDevel, TRUE);
 # endif;
 
@@ -3090,6 +3125,9 @@ read_config:
      * XXX: end with a slash to make life easier? Use "." instead of "" for
      * the trunk?
      */
+#if defined(_WIN32)
+    FileMapSeparators((char *)fileBranch, '\\', '/');
+#endif
     Tcl_SetVar(interp, "file-branch", fileBranch, TRUE);
 
     /*
@@ -3108,8 +3146,12 @@ read_config:
 	 */
 	fileDefault = File_PathConcat(fileRoot, fileBranch, value, 0);
     }
+
+#if defined(_WIN32)
+    FileMapSeparators((char *)fileDefault, '\\', '/');
+#endif
     Tcl_SetVar(interp, "file-default-dir", fileDefault, TRUE);
-    
+
     /*
      * Figure where the .gym files are located.
      */
@@ -3123,7 +3165,7 @@ read_config:
      * Now locate the directories for the various geode types.
      */
     fileDirs = (CONST char **)calloc(fileNumTypes*2, sizeof(char *));
-    
+
     for (i = 0; i < fileNumTypes; i++) {
 	if (i == 0) {
 	    value = File_FetchConfigData("kernel");
@@ -3142,8 +3184,12 @@ read_config:
 
 # if defined(unix)
     Tcl_SetVar(interp, "file-os", "unix", TRUE);
+# elif defined(_LINUX)
+    Tcl_SetVar(interp, "file-os", "unix", TRUE);
 # elif defined(_MSDOS)
     Tcl_SetVar(interp, "file-os", "dos", TRUE);
+# elif defined(_WIN32)
+    Tcl_SetVar(interp, "file-os", "win32", TRUE);
 # endif
 
     /*
@@ -3161,194 +3207,12 @@ read_config:
 					fileSysLib,
 					0);
     }
-    Tcl_SetVar(interp, "file-syslib-dir", fileAbsSysLib, TRUE);
-
-#else  /* else must be _WIN32 */
-    sprintf(ntsdkRegPos, REG_GEO_NAME "\\%s", sdkname);
-    Tcl_SetVar(interp, "file-reg-ntsdk", ntsdkRegPos, TRUE);
-
-    sprintf(swatRegPos, "%s\\Swat", ntsdkRegPos);
-    Tcl_SetVar(interp, "file-reg-swat", swatRegPos, TRUE);
-
-    Tcl_SetVar(interp, "file-os", "win32", TRUE);
-
-    /*
-     * Fetch the root directory of the development tree
-     */
-    returnCode = Registry_FindStringValue(ntsdkRegPos, "ROOT_DIR", fileRoot, 
-					  sizeof(fileRootAlloc));
-    if ((returnCode == FALSE) || (fileRoot[0] == '\0')) {
-	Punt("Root directory not specified in registry at position %s",
-	     ntsdkRegPos);
-    }
-    if (!File_CheckAbsolute(fileRoot)) {
-	Punt("Root directory \"%s\" must be absolute path", fileRoot);
-    }
-    if (access(fileRoot, R_OK) != 0) {
-	Punt("Root directory \"%s\" does not exist", fileRoot);
-    }
-    FileMapSeparators(fileRoot, '\\', '/');
-    Tcl_SetVar(interp, "file-root-dir", fileRoot, TRUE);
-
-    /*
-     * Find the current directory so we can set up the search paths
-     * for geodes.
-     */
-
-    if (_getcwd(cwd, sizeof(cwd)) == NULL) {
-	Punt("could not fetch current directory");
-    }
-    /*  !mw 2006-03-16 fails for some reason unknown, I did not further look into that matter, though */
-    /*atexit(FileRestoreWorkingDir);*/
-
-    /*
-     * Store the initial directory away in the init-directory variable
-     */
-    FileMapSeparators(cwd, '\\', '/');
-    Tcl_SetVar(interp, "file-init-dir", cwd, TRUE);
-    
-    returnCode = Registry_FindStringValue(ntsdkRegPos, "LOCAL_ROOT", 
-					  fileDevel, sizeof(fileDevelAlloc));
-    if ((returnCode == FALSE) || (fileDevel[0] == '\0')) {
-	fileDevel = fileRoot;
-    }
-    FileMapSeparators(fileDevel, '\\', '/');
-    Tcl_SetVar(interp, "file-devel-dir", fileDevel, TRUE);
-
-    fileBranch[0] = '\0';
-    if (argBranch != NULL && *argBranch != '\0') {
-	strcpy(fileBranch, argBranch);
-    } else {
-	returnCode = Registry_FindStringValue(ntsdkRegPos, "BRANCH", 
-					      fileBranch, 
-					      sizeof(fileBranch));
-	if (returnCode == FALSE) {
-	    fileBranch[0] = '\0';
-	}
-    }
-    FileMapSeparators(fileBranch, '\\', '/');
-    Tcl_SetVar(interp, "file-branch", fileBranch, TRUE);
-
-    /*
-     * See if there's a default tree in which to locate geodes. If not, we
-     * assume the default is just the appropriate subdirs under the root.
-     */
-    returnCode = Registry_FindStringValue(swatRegPos, "GEODE_SUBDIR", workbuf,
-				    sizeof(workbuf));
-    if ((returnCode == FALSE) || (workbuf[0] == '\0')) {
-	strcpy(fileDefault, fileRoot);
-    } else {
-	if (File_CheckAbsolute(workbuf) == FALSE) {
-	    /*
-	     * Form the absolute path for the default tree and store it away.
-	     */
-	    if (fileBranch[0] != '\0') {
-		sprintf(fileDefault, "%s/%s/%s", fileRoot, 
-			fileBranch, workbuf);
-	    } else {
-		sprintf(fileDefault, "%s/%s", fileRoot, workbuf);
-	    }
-	} else {
-	    strcpy(fileDefault, workbuf);
-	}
-    }
-    FileMapSeparators(fileDefault, '\\', '/');
-    Tcl_SetVar(interp, "file-default-dir", fileDefault, TRUE);
-    
-    /*
-     * Figure where the .gym files are located.
-     */
-    sprintf(fileGym, "%s/GYM", fileDefault);
-
-    /*
-     * Now locate the directories for the various geode types.
-     */
-    returnCode = Registry_FindDWORDValue(swatRegPos, "NUM_GEODE_TYPES", 
-					 &fileNumTypes);
-    if ((returnCode == FALSE) || (fileNumTypes < 0)) {
-	Punt("Number of Geodes not specified in registry at position %s",
-	     swatRegPos);
-    }
-    fileDirs = (CONST char **)calloc(fileNumTypes*2, sizeof(char *));
-    for (i = 0; i < fileNumTypes; i++) {  
-	if (i == 0) {
-	    returnCode = Registry_FindStringValue(swatRegPos, 
-						  "GEODE_TYPE_KERNEL", 
-						  workbuf, sizeof(workbuf));
-	} else {
-	    sprintf(key, "GEODE_TYPE_%d", i);
-	    returnCode = Registry_FindStringValue(swatRegPos, key, 
-						  workbuf, sizeof(workbuf));
-	}
-	if ((returnCode == TRUE) && (workbuf[0] != '\0')) {
-	    fileDirs[i*2+1] = (CONST char *)malloc(strlen(fileDefault) +
-						   strlen(workbuf) +
-						   2);
-	    sprintf(fileDirs[i*2+1], "%s/%s", fileDefault, workbuf);
-	    if (fileDevel[0] != '\0') {
-		fileDirs[i*2] = (CONST char *)malloc(strlen(fileDevel) +
-						     strlen(workbuf) +
-						     2);
-		sprintf(fileDirs[i*2], "%s/%s", fileDevel, workbuf);
-	    } else {
-		fileDirs[i*2] = NULL;
-		fprintf(stderr, "Problem finding Geode Type %d in registry\n",
-			i);
-	    }
-	} else {
-	    fprintf(stderr, "Problem finding Geode Type %d in registry\n", i);
-	    fileDirs[i*2+1] = NULL;
-	    fileDirs[i*2] = NULL;
-	}
-    }
-
-    /*
-     * Figure where the Tcl library is.
-     */
-    returnCode = Registry_FindStringValue(swatRegPos, "SYSLIB_SUBDIR", 
-					  fileSysLib, sizeof(fileSysLibAlloc));
-    if ((returnCode == FALSE) || (fileSysLib[0] == '\0')) {
-	Punt("System library directory not specified in registry under"
-	     " SYSLIB_SUBDIR");  
-    } else {
-	char *sysp;
-
-	do {
-	    sysp = (char *)strrchr(fileSysLib, PATHNAME_SLASH);
-	    if (sysp != NULL) {
-		*sysp = '/';
-	    }
-	} while (sysp != NULL);
-    }
-    if (File_CheckAbsolute(fileSysLib)) {
-	fileAbsSysLib = fileSysLib;
-    } else {
-	sprintf(fileAbsSysLib, "%s/%s", fileRoot, fileSysLib);
-    }
-    FileMapSeparators(fileAbsSysLib, '\\', '/');
-    Tcl_SetVar(interp, "file-syslib-dir", fileAbsSysLib, TRUE);
-
-    returnCode = Registry_FindStringValue(swatRegPos, "STAFF_PATH", 
-					  workbuf, sizeof(workbuf));
-    if ((returnCode == FALSE) || (workbuf[0] == '\0')) {
-	workbuf[0] = '\0';
-    }
-    FileMapSeparators(workbuf, '\\', '/');
-    Tcl_SetVar(interp, "file-staff-path", workbuf, TRUE);
-
-    /*
-     * Determine if debug messages are requested
-     * this was initialized to FALSE in swat.c
-     */
-    returnCode = Registry_FindDWORDValue(swatRegPos, "DEBUG_MODE", &dbg);
-    if ((returnCode == TRUE) && (dbg != 0)) {
-	win32dbg = TRUE;
-    }
-
+#if defined(_WIN32)
+    FileMapSeparators((char *)fileAbsSysLib, '\\', '/');
 #endif
+    Tcl_SetVar(interp, "file-syslib-dir", fileAbsSysLib, TRUE);
 
 after_config:
-
     /*
      * Initialize the help system so anything in file-err.tcl that has
      * on-line help won't send us off the deep end.
@@ -3365,46 +3229,6 @@ after_config:
 
     sargv[0] = "source";
     sargv[2] = 0;
-#if defined(_WIN32)
-    ccp = workbuf;
-    returnCode = Registry_FindStringValue(swatRegPos, "SYSLIB_OVERRIDE_PATH", 
-					  buf, sizeof(buf));
-    if ((returnCode == TRUE) && (buf[0] != '\0')) {
-	char *curpos, *endpos;
-	int  dirlen;
-
-	curpos = buf;
-	while (*curpos != '\0') {
-	    endpos = strchr(curpos, ';');
-	    if (endpos == NULL) {
-		endpos = strchr(curpos, '\0');
-	    }
-	    dirlen = endpos - curpos;
-	    if (dirlen > 0) {
-		strncpy(workbuf, curpos, dirlen);
-		workbuf[dirlen] = '\0';
-		if (access(workbuf, R_OK) != 0) {
-		    Punt("Cannot access SYSLIB_OVERRIDE_PATH = %s", workbuf);
-		}
-		strcat(workbuf, "/file-err.tcl");
-		if (access((char *)workbuf, R_OK) == 0) {
-		    sargv[1] = (char *)workbuf;
-		    fileerrFound = TRUE;
-		    if (Tcl_SourceCmd((ClientData)0, interp, 2, sargv) 
-			== TCL_OK) {
-			return;
-		    } else {
-			fprintf(stderr, 
-				"Problem detected while sourcing %s\n\n", 
-				workbuf);
-		    }
-		}
-	    } else {
-		Punt("SYSLIB_OVERRIDE_PATH contains an empty path: %s", buf);
-	    }
-	    curpos = endpos + ((*endpos == ';') ? 1 : 0);
-	}
-#else	
     if (getenv("SWATPATH") != NULL) {
 	ccp = File_PathConcat((CONST char *)getenv("SWATPATH"),
 			     "file-err.tcl",
@@ -3418,42 +3242,26 @@ after_config:
 	    }
 	}
 	free((char *)ccp);
-#endif
     }
 
     if (fileDevel && !File_CheckAbsolute(fileSysLib)) {
-#if defined(_WIN32)
-	sprintf(ccp, "%s/%s/file-err.tcl", fileDevel, fileSysLib);
-#else
 	ccp = File_PathConcat(fileDevel, fileSysLib, "file-err.tcl", 0);
-#endif
 	if (access((char *)ccp, R_OK) == 0) {
 	    sargv[1] = (char *)ccp;
 	    fileerrFound = TRUE;
 	    if (Tcl_SourceCmd((ClientData)0, interp, 2, sargv) == TCL_OK) {
-#if !defined(_WIN32)
 		free((char *)ccp);
-#endif 
 		return;
 	    }
 	}
-#if !defined(_WIN32)
 	free((char *)ccp);
-#endif
     }
-
-#if defined(_WIN32)
-    sprintf(ccp, "%s/file-err.tcl", fileAbsSysLib);
-#else
     ccp = File_PathConcat(fileAbsSysLib, "file-err.tcl", 0);
-#endif
     if (access((char *)ccp, R_OK) == 0) {
 	sargv[1] = (char *)ccp;
 	fileerrFound = TRUE;
 	if (Tcl_SourceCmd((ClientData)0, interp, 2, sargv) == TCL_OK) {
-#if !defined(_WIN32)
 	    free((char *)ccp);
-#endif
 	    return;
 	}
     }
@@ -3463,9 +3271,7 @@ after_config:
 	Punt("Parse error in %s", ccp);
     }
 
-#if !defined(_WIN32)
     free((char *)ccp);
-#endif    
-    
+
     return;
 }

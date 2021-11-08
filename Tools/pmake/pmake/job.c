@@ -3375,7 +3375,7 @@ Job_Empty (void)
 	     * it...Try and restart the stopped jobs.
 	     */
 	    jobFull = FALSE;
-#if defined(unix)
+#if defined(unix) || defined(_LINUX)
 	    while (!jobFull && !Lst_IsEmpty(stoppedJobs)) {
 		JobRestart((Job *)Lst_DeQueue(stoppedJobs));
 	    }

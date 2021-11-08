@@ -43,6 +43,10 @@
 /* We must have our structures be exact and not aligned to 8 bytes */
 #pragma pack(push, 2)
 #endif
+#if defined(__WATCOMC__)
+#pragma pack(push, 2)
+#endif
+
 /*
  * Macros for defining the structures
  */
@@ -125,10 +129,11 @@ typedef byte		Rpc_Stat;   	/* Call status */
 /*
  * communications modes
  */
-#define CM_NONE      0
-#define CM_SERIAL    1
-#define CM_NETWARE   2
-#define CM_NPIPE     3
+#define CM_NONE      	0
+#define CM_SERIAL    	1
+#define CM_NETWARE   	2
+#define CM_NPIPE     	3
+#define CM_SERIAL_TCP   4
 
 /*
  * Function definitions for Swat
@@ -1189,6 +1194,9 @@ ENDST(DebugRegsArgs)
 /* START C DEFINITIONS */
 #if defined(_MSC_VER)
 /* Go back to what we had for structure padding/packing */
+#pragma pack(pop)
+#endif
+#if defined(__WATCOMC__)
 #pragma pack(pop)
 #endif
 /* END C DEFINITIONS */

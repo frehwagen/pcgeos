@@ -587,9 +587,10 @@ CCOM_MODEL	?= -ml
 # zu ->  SS != DGROUP (i.e., do not assume stack is in data segment)
 # -of -> always output stack frames (helps SWAT, may be necessary in general)
 # -of+ -> The above but more agressive
+# -fpi87 -> generate x87 instructions
 
-CCOMFLAGS       += -D__GEOS__ -D__WATCOM__ -Ot -d3 -w4 \
-		   -zu -of -of+ -os -ol -ol+ -hc -s -ecc -zp1 -ei \
+CCOMFLAGS       += -D__GEOS__ -D__WATCOM__ -w4 -fpi87\
+		   -zu -of -of+ -ol -ol+ -s -ecc -zp1 -ei -zdp -d2 -hc\
 		   $(CCOM_MODEL)
 
 #if defined(linux)
@@ -706,7 +707,7 @@ ASSEMBLE	: .USE
 	    $(.TARGET:X*\\[eobj\\]:S/eobj/-DDO_ERROR_CHECKING/) \
 	    $(.TARGET:X*\\[gobj\\]:S/gobj/-DGCM/) \
 	    $(.TARGET:X\\[*\\]/*:S|^|-I|) $(-IFLAGS) $(.ALLSRC:M*Manager.asm) \
-	    -o $(.TARGET) 
+	    -o $(.TARGET)
 
 #
 # This is a general rule for linking things using glue. It uses the name of the

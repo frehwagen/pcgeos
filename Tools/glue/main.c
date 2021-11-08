@@ -58,6 +58,8 @@ static char *rcsid =
 
 #if defined _WIN32
 unsigned long __stdcall GetTickCount(void);
+#else
+#include <time.h>
 #endif /* defined _WIN32 */
 
 /*
@@ -212,6 +214,45 @@ ustrncmp(const char *s1, const char *s2, unsigned n)
     return(n != 0);
 }
 
+/***********************************************************************
+ *				RenameFileSrcMapEntryy
+ ***********************************************************************
+ * SYNOPSIS:	   Changes the key (source file name) in the sources
+ *                 hash map. We assume that the old name entry is
+ *		   actually there before the call, otherwise assert.
+ * CALLED BY:	    EXTERNAL
+ * RETURN:	    Nothing
+ * SIDE EFFECTS:    ?
+ *
+ * STRATEGY:
+ *
+ * REVISION HISTORY:
+ *	Name	Date		Description
+ *	----	----		-----------
+ *	ardeb	3/17/91		Initial Revision
+ *
+ ***********************************************************************/
+void
+RenameFileSrcMapEntry(ID oldName, ID newName)
+{
+    Hash_Entry	    *he, *he2;
+    Boolean 	    new;
+    Vector	    v;
+    
+    he = Hash_FindEntry(&tsrcMap, (SpriteAddress)oldName);		
+    if(he) {
+	v = Hash_GetValue(he);
+	Hash_SetValue(he, NULL);
+	he2 = Hash_CreateEntry(&tsrcMap, (SpriteAddress)newName, &new);
+	assert(new);
+	Hash_SetValue(he2, v);
+	Hash_DeleteEntry(&tsrcMap, he);
+    }
+    else {
+    	assert(FALSE);
+    }
+}
+
 /***********************************************************************
  *				AddSrcMapEntry
  ***********************************************************************
@@ -1697,24 +1738,19 @@ LoadFileIfNeeded(char	*myfile)
     void    	    *handle;
     ObjFileType	    type;
 
-printf("LoadFileIfNeeded\n");
     handle = Obj_Open(myfile, NULL, &type, FALSE);
 
-		printf("LoadFileIfNeeded2\n");
     if (handle == NULL) {
 	/*
 	 * Obj_Open has already given the error message.
 	 */
 	return FALSE;
     }
-		printf("LoadFileIfNeeded3\n");
 
     if (!Pass1VM_FileIsNeeded(myfile, handle)) {
-			printf("not needed\n");
 	return FALSE;
     }
 
-		printf("LoadFileIfNeeded4\n");
     Pass1Load(myfile);
     return TRUE;
 }
@@ -2135,7 +2171,16 @@ main(argc, argv)
 #if defined _WIN32
     serialNumber = (word) (GetTickCount() / 100);
 #else
-    serialNumber = time(0);
+    {
+	struct timespec ts;
+	if(clock_gettime(CLOCK_MONOTONIC, &ts) != 0) {
+	    serialNumber = time(0);
+        }
+	else {
+	    serialNumber = 
+		    (ts.tv_nsec/10000 + ts.tv_sec*1000);
+	}
+    }
 #endif /* defined _WIN32 */
 
     /*
@@ -2378,9 +2423,7 @@ main(argc, argv)
      * Now load all the given object files for the first pass.
      */
     for (i = firstobj; i < argc && argv[i][0] != '-'; i++) {
-printf("Pass1Load++ %s\n", argv[i]);
 	Pass1Load(argv[i]);
-	printf("Pass1Load-- %s\n", argv[i]);
     }
 
     if ((i != argc) && (argv[i][1] != 'l')){
@@ -2448,7 +2491,6 @@ printf("Pass1Load++ %s\n", argv[i]);
 	    fprintf(stderr, "pass1 memory stats dumped to %s\n", dumpfile);
 	}
     }
-printf("before InterPass\n");
     InterPass(outfile, paramfile, mapfile);
 
     if (errors) {

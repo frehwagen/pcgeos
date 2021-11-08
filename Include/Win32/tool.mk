@@ -108,7 +108,8 @@ CC_IMPSRC = $(.IMPSRC:S/\//\\/g)
 	$(CC) -D_LINUX -bt=linux $(CFLAGS) \
 									 "$(CC_IMPSRC)" \
 									 -i="$(WATCOM)/lh" \
-									 -i="$(WATCOM)/h" 
+									 -i="$(WATCOM)/h" \
+									 -d_WCI86FAR=__far
 
 #CC		= wcc386 -zq -zlf -ei
 CC		= wcc386 -zq -zlf -ei -d9 
@@ -182,6 +183,7 @@ ${MACHINES:S%$%.md/$(NAME).exe%g} : $(win32OBJS) $(win32LIBS)
 			$(.ALLSRC:M*.obj:S/^/file /g) \
 			$(.ALLSRC:M*.lib:S/^/lib /g) \
 			library kernel32 \
+			library ws2_32 \
 			SYSTEM NT_WIN \
 			RU CON \
 			$(XLINKFLAGS)
@@ -194,7 +196,7 @@ ${MACHINES:S%$%.md/$(NAME).%g} : $(linuxOBJS) $(linuxLIBS)
 			$(.ALLSRC:M*.a:S/^/lib /g) \
 			library $(WATCOM)/lib386/linux/clib3r.lib \
 			library $(WATCOM)/lib386/math387r.lib \
-			library $(WATCOM)/lib386/linux/emu387.lib \
+			library $(WATCOM)/lib386/emu387.lib \
 			FORMAT ELF \
 			$(XLINKFLAGS)
 

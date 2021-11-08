@@ -3,7 +3,7 @@
  *     Copyright (c) Geoworks 1996 -- All Rights Reserved
  *
  * PROJECT:        PC GEOS
- * MODULE:		
+ * MODULE:
  * FILE:	   ntserial.c
  *
  * AUTHOR:		Daniel Baumann, Jul 17, 1996
@@ -34,9 +34,9 @@
  *	dbaumann	7/17/96   	Initial version.
  *
  * DESCRIPTION:
- *	This is the WIN32 implementation of the serial port 
+ *	This is the WIN32 implementation of the serial port
  *     manipulation required by Swat.
- *		
+ *
  ***********************************************************************/
 #ifndef lint
 static char *rcsid =
@@ -53,6 +53,7 @@ static char *rcsid =
 #define timeval timeval_bogus
 #define timercmp timercmp_bogus
 #include <compat/windows.h>       /* for communications stuff */
+#include <winsock2.h>
 #undef timercmp
 #undef timeval
 #undef SID
@@ -99,7 +100,7 @@ Ntserial_Init(HANDLE *comHandle, const char *portDesc, LPOVERLAPPED ovlpR,
     int portnum, baudrate, irlevel;
     char comportstr[5] = "";
     const char *pdesc = portDesc;
-    
+
     portnum = 0;
     while ((*pdesc != '\0') && (*pdesc != ',')) {
 	portnum = portnum * 10 + (*pdesc - '0');
@@ -135,31 +136,31 @@ Ntserial_Init(HANDLE *comHandle, const char *portDesc, LPOVERLAPPED ovlpR,
     /* Open the comm port.  Can open COM, LPT */
     *comHandle = CreateFile(comportstr,
 			    GENERIC_READ | GENERIC_WRITE,
-			    0, 
-			    0, 
+			    0,
+			    0,
 			    OPEN_EXISTING,
-			    FILE_FLAG_OVERLAPPED, 
+			    FILE_FLAG_OVERLAPPED,
 			    0);
     if (*comHandle == INVALID_HANDLE_VALUE) {
 	NtserialOutputLastError("Ntserial_Init: CreateFile:");
 	return FALSE;
     }
-    
+
     /* Get the current settings of the COMM port */
-    
+
     success = GetCommState(*comHandle, &dcb);
     if (!success) {
 	NtserialOutputLastError("Ntserial_Init: GetCommState:");
 	return FALSE;
     }
-    
+
     /* Modify the baud rate, etc.
      */
     dcb.BaudRate = baudrate;
     dcb.ByteSize = 8;
     dcb.Parity = NOPARITY;
     dcb.StopBits = ONESTOPBIT;
-    
+
     /* Apply the new comm port settings
      */
     success = SetCommState(*comHandle, &dcb);
@@ -167,7 +168,7 @@ Ntserial_Init(HANDLE *comHandle, const char *portDesc, LPOVERLAPPED ovlpR,
 	NtserialOutputLastError("Ntserial_Init: SetCommState:");
 	return FALSE;
     }
-    
+
     /* XXXdan-q use the irlevel below somehow - if I understood it */
     timeouts.ReadIntervalTimeout = 0;
     timeouts.ReadTotalTimeoutMultiplier = 0;
@@ -178,7 +179,7 @@ Ntserial_Init(HANDLE *comHandle, const char *portDesc, LPOVERLAPPED ovlpR,
     if (!success) {
 	return FALSE;
     }
-    
+
     /* Set the Data Terminal Ready line
      */
     success = EscapeCommFunction(*comHandle, SETDTR);
@@ -199,13 +200,13 @@ Ntserial_Init(HANDLE *comHandle, const char *portDesc, LPOVERLAPPED ovlpR,
 /***********************************************************************
  *				Ntserial_Read
  ***********************************************************************
- * SYNOPSIS:         read data from serial line	    
+ * SYNOPSIS:         read data from serial line
  * CALLED BY:	     RpcHandleStream, RpcSendFile, Rpc_ReadFromGeode,
  *                   RpcFindGeode
  * RETURN:	     length of data read (-1 if error) (0 if no data avail)
- * SIDE EFFECTS:     
+ * SIDE EFFECTS:
  *
- * STRATEGY:	    
+ * STRATEGY:
  *
  * REVISION HISTORY:
  *	Name	Date		Description
@@ -213,8 +214,8 @@ Ntserial_Init(HANDLE *comHandle, const char *portDesc, LPOVERLAPPED ovlpR,
  *		7/23/96   	Initial Revision
  *
  ***********************************************************************/
-int  	
-Ntserial_Read(HANDLE comHandle, void *buffer, int bufSize, LPOVERLAPPED ovlp, 
+int
+Ntserial_Read(HANDLE comHandle, void *buffer, int bufSize, LPOVERLAPPED ovlp,
 	      BOOL bBlock)
 {
     DWORD bytesRead = 0;
@@ -235,7 +236,7 @@ Ntserial_Read(HANDLE comHandle, void *buffer, int bufSize, LPOVERLAPPED ovlp,
 		bytesRead = 0;
 	    break;
 	case ERROR_MORE_DATA:
-	    /* 
+	    /*
 	     * the message is longer than the buf size
 	     */
 	    break;
@@ -261,14 +262,14 @@ Ntserial_Read(HANDLE comHandle, void *buffer, int bufSize, LPOVERLAPPED ovlp,
 /***********************************************************************
  *				Ntserial_WriteV
  ***********************************************************************
- * SYNOPSIS:       send all the data requested to the modem	    
- * CALLED BY:      RpcSendV, RpcResend	    
- * PASS:           struct iovec *iov   - vector of buffers to write 
+ * SYNOPSIS:       send all the data requested to the modem
+ * CALLED BY:      RpcSendV, RpcResend
+ * PASS:           struct iovec *iov   - vector of buffers to write
  *                 int len             - elements in the vector
  * RETURN:	   bytes written, -1 if bytes couldn't be sent
- * SIDE EFFECTS:    
+ * SIDE EFFECTS:
  *
- * STRATEGY:	    
+ * STRATEGY:
  *
  * REVISION HISTORY:
  *	Name	Date		Description
@@ -276,12 +277,12 @@ Ntserial_Read(HANDLE comHandle, void *buffer, int bufSize, LPOVERLAPPED ovlp,
  *		7/23/96   	Initial Revision
  *
  ***********************************************************************/
-int  	
-Ntserial_WriteV(HANDLE comHandle, struct iovec *iov, int iov_len, 
+int
+Ntserial_WriteV(HANDLE comHandle, struct iovec *iov, int iov_len,
 		LPOVERLAPPED ovlp)
 {
     int iovIndex;
-    int iovLength, bytesWritten, iovBytesWritten, totalBytesWritten = 0;
+    DWORD iovLength, bytesWritten, iovBytesWritten, totalBytesWritten = 0;
     DWORD errors = 0;
     COMSTAT comStats;
     BOOL success;
@@ -292,12 +293,12 @@ Ntserial_WriteV(HANDLE comHandle, struct iovec *iov, int iov_len,
 	iovBytesWritten = 0;
 	iovLength = iov[iovIndex].iov_len;
 	while (iovBytesWritten < iovLength) {
-	    success = WriteFile(comHandle, 
+	    success = WriteFile(comHandle,
 				iov[iovIndex].iov_base + iovBytesWritten,
-				iovLength - iovBytesWritten, 
-				&bytesWritten, 
+				iovLength - iovBytesWritten,
+				&bytesWritten,
 				ovlp);
-	    if (success == FALSE) {    
+	    if (success == FALSE) {
 		switch (GetLastError()) {
 		case ERROR_IO_PENDING:
 		    WaitForSingleObject(ovlp->hEvent, INFINITE);
@@ -335,13 +336,13 @@ Ntserial_WriteV(HANDLE comHandle, struct iovec *iov, int iov_len,
 /***********************************************************************
  *				Ntserial_Check
  ***********************************************************************
- * SYNOPSIS:        see if any characters are available from the 
- *                       serial port	    
+ * SYNOPSIS:        see if any characters are available from the
+ *                       serial port
  * CALLED BY:	    RpcWait
  * RETURN:	    number of characters available
- * SIDE EFFECTS:    
+ * SIDE EFFECTS:
  *
- * STRATEGY:	    
+ * STRATEGY:
  *
  * REVISION HISTORY:
  *	Name	Date		Description
@@ -349,7 +350,7 @@ Ntserial_WriteV(HANDLE comHandle, struct iovec *iov, int iov_len,
  *		7/23/96   	Initial Revision
  *
  ***********************************************************************/
-int  	
+int
 Ntserial_Check(HANDLE comHandle, LPOVERLAPPED ovlp)
 {
     BOOL  success;
@@ -375,8 +376,8 @@ Ntserial_Check(HANDLE comHandle, LPOVERLAPPED ovlp)
  * SYNOPSIS:        Close the appropriate communications port
  * CALLED BY:	    EXTERNAL
  * RETURN:	    nothing
- * SIDE EFFECTS:    
- * 
+ * SIDE EFFECTS:
+ *
  * STRATEGY:
  *
  * REVISION HISTORY:
@@ -385,7 +386,7 @@ Ntserial_Check(HANDLE comHandle, LPOVERLAPPED ovlp)
  *	DB	7/17/96   	Initial version.
  *
  ***********************************************************************/
-void 	
+void
 Ntserial_Exit(HANDLE *comHandle, LPOVERLAPPED ovlpR, LPOVERLAPPED ovlpW)
 {
     BOOL success = FALSE;
@@ -395,58 +396,29 @@ Ntserial_Exit(HANDLE *comHandle, LPOVERLAPPED ovlpR, LPOVERLAPPED ovlpW)
     if (!success) {
 	NtserialOutputLastError("Ntserial_Exit: EscapeCommFunction: %d\r\n");
     }
-    
+
     success = CloseHandle(*comHandle);
     if (!success) {
 	NtserialOutputLastError("Ntserial_Exit: CloseHandle:");
     }
-    
+
     CloseHandle(ovlpR->hEvent);
     CloseHandle(ovlpW->hEvent);
 
     return;
 }	/* End of Ntserial_Exit.	*/
 
-
-/* empty Ipx funtion definitions.  Makes the Borland linker happy for now.
- * Novell will not be supported initially
- */
-
-int Ipx_Check(void) {
-    return 0;
-}
-
-void Ipx_Init(char *addr) {
-}
-
-void Ipx_Exit(void) {
-}
-
-void Ipx_CopyToSendBuffer(caddr_t a, int b, int c) {
-}
-
-void Ipx_SendLow(int a) {
-}
-
-int Ipx_CheckPacket(void) {
-return 0;
-}
-
-int Ipx_ReadLow(void *buf, int bufSize) {
-return 0;
-}
-
 
 /***********************************************************************
  *				NtserialOutputLastError
  ***********************************************************************
  *
- * SYNOPSIS:	    
- * CALLED BY:	    
- * RETURN:	    
- * SIDE EFFECTS:    
+ * SYNOPSIS:
+ * CALLED BY:
+ * RETURN:
+ * SIDE EFFECTS:
  *
- * STRATEGY:	    
+ * STRATEGY:
  *
  * REVISION HISTORY:
  *	Name	Date		Description
@@ -464,7 +436,7 @@ NtserialOutputLastError(char *where)
 
 #if 0
     char buf[1000];
-    
+
     WinUtil_SprintError(buf, where);
     MessageFlush(buf);
 #endif

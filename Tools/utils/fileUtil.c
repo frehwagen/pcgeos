@@ -93,7 +93,13 @@ FileUtil_Open(FileType *file, const char *path, int oflags, int sflags,
     case O_RDWR:
     default:
 #if defined(_LINUX)
-	sprintf(flags, "w+");
+	if ((oflags & (O_CREAT | O_EXCL)) == (O_CREAT | O_EXCL)) {
+	    sprintf(flags, "w+");
+	}else if (oflags & O_TRUNC) {
+	    sprintf(flags, "w+");
+    	} else {
+	    sprintf(flags, "a+");
+	}
 #else
 	sprintf(flags, "a+");
 #endif

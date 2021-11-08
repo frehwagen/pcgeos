@@ -21,7 +21,7 @@
  *	echo	    	    Produce output
  *	system	    	    Execute a command, giving it controll of the
  *	    	    	    terminal.
- *	wcreate	    	    Create a new window. 
+ *	wcreate	    	    Create a new window.
  *	wdelete	    	    Delete a window
  *	wpush	    	    Push to another window for I/O purposes
  *	wpop	    	    Return to previous window
@@ -64,10 +64,46 @@ static char *rcsid =
 #include "src.h"
 #include "shell.h"
 #include "cmdNZ.h"
-#include <curses.h>
+#ifdef _LINUX
+#include <sys/ioctl.h>
+#include <curses/curses.h>
+#include <termios.h>
+
+#define TIOCGETP        0x7408
+#define TIOCSETP        0x7409
+#define TIOCSETN        0x740a          /* TIOCSETP wo flush */
+#define TIOCGLTC    0x7474          /* get special local chars */
+#define TIOCSLTC    0x7475          /* set special local chars */
+
+#define SWATWCTL_FOCUS		"swatwctl focus >/dev/null 2>&1"
+#define SWATWCTL_RESTORE	"swatwctl restore >/dev/null 2>&1"
+
+#else
+#include <ntcurses/curses.h>
+#endif
 #include <compat/file.h>
 
 #if defined(_WIN32)
+#define _WIN32_WINNT    0x0500
+# undef FIXED
+# undef LONG
+# define LONG LONG_biff
+# define SID SID_biff
+# define timeval timeval_biff
+# undef timercmp
+# define timercmp timercmp_biff
+# define fd_set fd_set_biff
+# include <compat/windows.h>
+# include <winutil.h>
+#include <winresrc.h>
+#include <tlhelp32.h>
+#include <winuser.h>
+# undef fd_set
+# undef timercmp
+# undef timeval
+# undef SID
+# undef LONG
+# define FIXED 0x80
 # include <curspriv.h>
 #endif
 
@@ -91,12 +127,12 @@ static char 	    	*BL;	    	/* Audible bell, if not ^G */
 # define _lastch	_maxchng
 # define wgetestr wgetstr
 
-# define AM TRUE             /* (autowrap on) is TRUE */ 
+# define AM TRUE             /* (autowrap on) is TRUE */
 # define XN FALSE            /* (??? about newline) is FALSE */
-# define NONL FALSE          /* (not do return after linefeed) is FALSE */ 
+# define NONL FALSE          /* (not do return after linefeed) is FALSE */
 #endif
 
-#if defined(_WIN32)
+#if defined(_WIN32) || defined(__WATCOMC__)
 #define WADDSTR_CAST unsigned char *
 #else
 #define WADDSTR_CAST char *
@@ -120,12 +156,13 @@ typedef ntcCell		cursesChar;	/* defined in ntcurses/curses.h */
 # define WPRINTW 			wprintwWide
 #endif
 
-#if defined(_WIN32)
+#if defined(_WIN32) || defined(__WATCOMC__)
 extern  int	_sprintw(WINDOW *win, const char *fmt, va_list args);
 # define _putchar(c) putchar(c)  /* not used in WIN32 */
 #else
 extern int  	    	_putchar(char c);
 #endif
+extern int wprintw(WINDOW *win, char *fmt, ...);
 
 static char 	    	backPage,   	/* Character to go back a page */
 			forwPage,   	/* Ditto to go forward a page */
@@ -264,6 +301,276 @@ static void CursesEndScroll(CursesInputState *state);
 extern DosInvertScreenRegion(short start, short end);
 extern DosCopyScreenRegion(char *buf, short start, short end);
 
+
+#if defined(_WIN32)
+
+/***********************************************************************
+ *				FindProcessID
+ ***********************************************************************
+ * SYNOPSIS:	    Find a process with a given id in a snapshot
+ * CALLED BY:	    GetParentProcessId
+ * RETURN:	    TRUE if retValue has been filled by relocated
+ *                  process entry.
+ * SIDE EFFECTS:    None
+ *
+ * STRATEGY:
+ *
+ * REVISION HISTORY:
+ *	Name	Date		Description
+ *	----	----		-----------
+ *	FR	27/ 9/21	Initial Revision
+ *
+ ***********************************************************************/
+BOOL
+FindProcessID(HANDLE snapshot, DWORD id, LPPROCESSENTRY32 retValue)
+{
+    BOOL result;
+    retValue->dwSize = sizeof(PROCESSENTRY32);
+    result = Process32First(snapshot, retValue);
+    while (result)
+    {
+	if (retValue->th32ProcessID == id)
+	{
+	    return TRUE;
+	}
+	result = Process32Next(snapshot, retValue);
+    }
+    return FALSE;
+}
+
+/***********************************************************************
+ *				GetParentProcessId
+ ***********************************************************************
+ * SYNOPSIS:	    Get the parent process id of the current process
+ * CALLED BY:	    FocusSwatWindow
+ * RETURN:	    TRUE if parentPID has been filled by parent
+ *                  process ID.
+ * SIDE EFFECTS:    None
+ *
+ * STRATEGY:
+ *
+ * REVISION HISTORY:
+ *	Name	Date		Description
+ *	----	----		-----------
+ *	FR	27/ 9/21	Initial Revision
+ *
+ ***********************************************************************/
+BOOL
+GetParentProcessId(DWORD* parentPID)
+{
+    HANDLE snapshot;
+    PROCESSENTRY32 processEntry;
+    DWORD currentPID = GetCurrentProcessId();
+
+    /* request snapshot of all windows processed */
+    snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
+    if (INVALID_HANDLE_VALUE == snapshot)
+    {
+	return FALSE;
+    }
+
+    /* find current process in the snapshot */
+    if (!FindProcessID(snapshot, currentPID, &processEntry))
+    {
+	CloseHandle(snapshot);
+	return FALSE;
+    }
+
+    /* close the snapshot */
+    if (!CloseHandle(snapshot))
+    {
+	return FALSE;
+    }
+
+    *parentPID = processEntry.th32ParentProcessID;
+    return TRUE;
+}
+
+BOOL
+/***********************************************************************
+*				IsMainWindow
+***********************************************************************
+* SYNOPSIS:	    The windows pointed to by the handle to be an
+*                  main window.
+* CALLED BY:	    EnumWindowsCallback
+* RETURN:	    TRUE if windows is a visible main window.
+* SIDE EFFECTS:    None
+*
+* STRATEGY:
+*
+* REVISION HISTORY:
+*	Name	Date		Description
+*	----	----		-----------
+*	FR	27/ 9/21	Initial Revision
+*
+***********************************************************************/
+IsMainWindow(HWND handle)
+{
+    return GetWindow(handle, GW_OWNER) == (HWND)0 && IsWindowVisible(handle);
+}
+
+/***********************************************************************
+ *				EnumWindowsCallback
+ ***********************************************************************
+ * SYNOPSIS:	    Enumerate all available windows and check for
+ *                  main window for given process..
+ * CALLED BY:	    FindMainWindow
+ * RETURN:	    TRUE if no main windows has with the process id
+ *                  given has been found. Otherwise windowHdl is Filled
+ *                  in the result data structure.
+ * SIDE EFFECTS:    None
+ *
+ * STRATEGY:
+ *
+ * REVISION HISTORY:
+ *	Name	Date		Description
+ *	----	----		-----------
+ *	FR	27/ 9/21	Initial Revision
+ *
+ ***********************************************************************/
+typedef struct HandleDataStruct
+{
+    unsigned long 	processID;
+    HWND 		windowHdl;
+} HandleData;
+
+BOOL CALLBACK
+EnumWindowsCallback(HWND handle, LPARAM lParam)
+{
+    HandleData* data = (HandleData*)lParam;
+    unsigned long processID = 0;
+    GetWindowThreadProcessId(handle, &processID);
+    if (data->processID != processID || !IsMainWindow(handle))
+	return TRUE;
+    data->windowHdl = handle;	/* window of process */
+    return FALSE;
+}
+
+/***********************************************************************
+ *				FindMainWindow
+ ***********************************************************************
+ * SYNOPSIS:	    Find main window handle for given process
+ * CALLED BY:	    FindMainWindow
+ * RETURN:	    HWND of main window found or 0 for no found.
+ * SIDE EFFECTS:    None
+ *
+ * STRATEGY:
+ *
+ * REVISION HISTORY:
+ *	Name	Date		Description
+ *	----	----		-----------
+ *	FR	27/ 9/21	Initial Revision
+ *
+ ***********************************************************************/
+HWND
+FindMainWindow(unsigned long processID)
+{
+    HandleData handleData;
+    handleData.processID = processID;
+    handleData.windowHdl = 0;
+    EnumWindows(EnumWindowsCallback, (LPARAM)&handleData);
+    return handleData.windowHdl;
+}
+
+/***********************************************************************
+ *				FocusSwatWindow
+ ***********************************************************************
+ * SYNOPSIS:	    Find the current process main window (likely the
+ *                  console parent processes main window)
+ * CALLED BY:	    read-line, read-char
+ * RETURN:	    HWND of previous focus window or 0 if none
+ * SIDE EFFECTS:    None
+ *
+ * STRATEGY:
+ *
+ * REVISION HISTORY:
+ *	Name	Date		Description
+ *	----	----		-----------
+ *	FR	27/ 9/21	Initial Revision
+ *
+ ***********************************************************************/
+HWND
+FocusSwatWindow()
+{
+    DWORD parentID;
+    DWORD otherThreadId;
+    DWORD currentThreadId = GetCurrentThreadId();
+    HWND oldForeground;
+    HWND otherWindow;
+
+    oldForeground = GetForegroundWindow();
+    if(!GetParentProcessId(&parentID))
+    {
+	parentID = currentThreadId; /* no parent found, use current process */
+    }
+    otherWindow = FindMainWindow(parentID); /* get swat console window */
+
+    if(otherWindow == 0)
+    {
+	return 0;
+    }
+    otherThreadId = GetWindowThreadProcessId(otherWindow, NULL);
+
+    if( otherThreadId != currentThreadId )
+    {
+	AttachThreadInput(currentThreadId, otherThreadId, TRUE);
+    }
+
+    SwatRestoreWindow(otherWindow); /* actives and focus swat main window */
+
+    if( otherThreadId != currentThreadId )
+    {
+	AttachThreadInput(currentThreadId, otherThreadId, FALSE);
+    }
+
+    return oldForeground;
+}
+
+/***********************************************************************
+ *				FocusSwatWindow
+ ***********************************************************************
+ * SYNOPSIS:	    Restores the focus and activates the window
+ *                  given.
+ * CALLED BY:	    read-line, read-char
+ * RETURN:	    None
+ * SIDE EFFECTS:    None
+ *
+ * STRATEGY:
+ *
+ * REVISION HISTORY:
+ *	Name	Date		Description
+ *	----	----		-----------
+ *	FR	27/ 9/21	Initial Revision
+ *
+ ***********************************************************************/
+VOID
+SwatRestoreWindow(HWND oldForeground)
+{
+    if( oldForeground != 0 )
+    {
+	INPUT keyInput;
+
+	keyInput.type = INPUT_KEYBOARD;
+        keyInput.ki.wScan = 0; /* key hardware scan code */
+        keyInput.ki.time = 0;
+        keyInput.ki.dwExtraInfo = 0;
+
+	//set focus to the hWnd (sending Alt allows to bypass limitation)
+	keyInput.ki.wVk = VK_MENU;
+	keyInput.ki.dwFlags = 0;   /* key press 0 */
+	SendInput(1, &keyInput, sizeof(INPUT));
+
+	SetForegroundWindow(oldForeground); /* restore focus of old window */
+
+	keyInput.ki.wVk = VK_MENU;
+	keyInput.ki.dwFlags = KEYEVENTF_KEYUP;  /* simulate key up event */
+	SendInput(1, &keyInput, sizeof(INPUT));
+
+	Sleep(50); /* otherwise too fast switching may confuse swat */
+    }
+}
+#endif
+
 #if defined(unix)
 
 /***********************************************************************
@@ -287,21 +594,27 @@ extern DosCopyScreenRegion(char *buf, short start, short end);
 static void
 CursesTstp(void)
 {
+#ifndef _LINUX
     struct sgttyb   osgb;
     struct ltchars  oltc;
+#endif
     int	omask;
 
+#ifndef _LINUX
     osgb = _tty;
+#endif
     mvcur(0, COLS - 1, LINES - 1, 0);
     endwin();
     /*
      * Restore ltchars too (dsuspc...)
      */
+#ifndef _LINUX
     ioctl(_tty_ch, TIOCGLTC, &oltc);
     ioctl(_tty_ch, TIOCSLTC, &ltc);
+#endif
 
     fflush(stdout);
-    
+
     /* reset signal handler so kill below stops us */
     signal(SIGTSTP, SIG_DFL);
 
@@ -319,16 +632,18 @@ CursesTstp(void)
     signal(SIGTSTP, CursesTstp);
 
     /* Reset terminal modes to what we want */
+#ifndef _LINUX
     _tty = osgb;
     ioctl(_tty_ch, TIOCSETN, &_tty);
     ioctl(_tty_ch, TIOCSLTC, &oltc);
+#endif
 
     /* Redisplay the screen */
     wrefresh(curscr);
 }
 #endif
 
-#if defined(_MSDOS)  
+#if defined(_MSDOS)
 #define	scrollnow_hideMouse(win, lines) (Mouse_HideCursor(),scrollnow(win,lines),Mouse_ShowCursor())
 #else
 #define scrollnow_hideMouse(win, lines) scrollnow(win, lines)
@@ -340,15 +655,15 @@ CursesTstp(void)
  *			CursesInsertHighlightedTextCmd
  *********************************************************************
  * SYNOPSIS: 	    	get the highlighted text into the command line
- * CALLED BY:	
+ * CALLED BY:
  * RETURN:
  * SIDE EFFECTS:
  * STRATEGY:	    	this is a toughy...
  * REVISION HISTORY:
- *	Name	Date		Description			     
- *	----	----		-----------			     
- *	jimmy	2/25/93		Initial version			     
- * 
+ *	Name	Date		Description
+ *	----	----		-----------
+ *	jimmy	2/25/93		Initial version
+ *
  *********************************************************************/
 DEFCMD(insert-highlighted-text,CursesInsertHighlightedText,TCL_EXACT,NULL,swat_prog.mouse,
 "")
@@ -390,10 +705,10 @@ DEFCMD(insert-highlighted-text,CursesInsertHighlightedText,TCL_EXACT,NULL,swat_p
  * SIDE EFFECTS:
  * STRATEGY:
  * REVISION HISTORY:
- *	Name	Date		Description			     
- *	----	----		-----------			     
- *	jimmy	2/25/93		Initial version			     
- * 
+ *	Name	Date		Description
+ *	----	----		-----------
+ *	jimmy	2/25/93		Initial version
+ *
  *********************************************************************/
 static void
 CursesInsertMouseHighlightText(void)
@@ -429,10 +744,10 @@ CursesInsertMouseHighlightText(void)
  * SIDE EFFECTS:
  * STRATEGY:
  * REVISION HISTORY:
- *	Name	Date		Description			     
- *	----	----		-----------			     
- *	jimmy	2/25/93		Initial version			     
- * 
+ *	Name	Date		Description
+ *	----	----		-----------
+ *	jimmy	2/25/93		Initial version
+ *
  *********************************************************************/
 static void
 CursesInsertHighlightInfoText(void)
@@ -441,11 +756,11 @@ CursesInsertHighlightInfoText(void)
 
     lp = highlightinfo.firstline;
 
-    while (lp != NULL) 
+    while (lp != NULL)
     {
 	char    *cp;
 	int    	length;
-   
+
 	cp = lp->line;
 	length = strlen(cp);
 	/*
@@ -463,7 +778,7 @@ CursesInsertHighlightInfoText(void)
 	    length++;
 	}
 	while (--length)
-	{	
+	{
 	    (* inStateTop->inProc)(*cp++, inStateTop);
 	}
 	if (lp == highlightinfo.lastline)
@@ -484,10 +799,10 @@ CursesInsertHighlightInfoText(void)
  * SIDE EFFECTS:
  * STRATEGY:
  * REVISION HISTORY:
- *	Name	Date		Description			     
- *	----	----		-----------			     
- *	jimmy	2/23/93		Initial version			     
- * 
+ *	Name	Date		Description
+ *	----	----		-----------
+ *	jimmy	2/23/93		Initial version
+ *
  *********************************************************************/
 DEFCMD(clear-highlightinfo,CursesClearHighlightInfo,TCL_EXACT,NULL,swat_prog.mouse,
 "Usage:\n\
@@ -518,20 +833,20 @@ See also:\n\
  *			CursesGetMouseHighlight
  *********************************************************************
  * SYNOPSIS: 	    get values from mouse_highlight TCL variable
- * CALLED BY:	
+ * CALLED BY:
  * RETURN:  	    pointer to string if mouse_highlight is non-null,
  *	    	    value1 and value are the two elements that make up
  *	    	    mouse_highlight conveniently swapped into ascending
  *	    	    order if not already so by chance...
  *	    	    else NULL if mouse_highlight is a null value
- *	    	    
+ *
  * SIDE EFFECTS:
  * STRATEGY:
  * REVISION HISTORY:
- *	Name	Date		Description			     
- *	----	----		-----------			     
- *	jimmy	2/24/93		Initial version			     
- * 
+ *	Name	Date		Description
+ *	----	----		-----------
+ *	jimmy	2/24/93		Initial version
+ *
  *********************************************************************/
 static char *
 CursesGetMouseHighlight(int *value1, int *value2)
@@ -555,7 +870,7 @@ CursesGetMouseHighlight(int *value1, int *value2)
 	return hl;
     }
     return NULL;
-}    
+}
 
 /*********************************************************************
  *			CursesConvertMouseHighlightToCoords
@@ -566,13 +881,13 @@ CursesGetMouseHighlight(int *value1, int *value2)
  * SIDE EFFECTS:
  * STRATEGY:
  * REVISION HISTORY:
- *	Name	Date		Description			     
- *	----	----		-----------			     
- *	jimmy	2/24/93		Initial version			     
- * 
+ *	Name	Date		Description
+ *	----	----		-----------
+ *	jimmy	2/24/93		Initial version
+ *
  *********************************************************************/
 char *
-CursesConvertMouseHighlightToCoords(int *startX, 
+CursesConvertMouseHighlightToCoords(int *startX,
 				    int *startY,
 				    int *endX,
 				    int *endY)
@@ -602,10 +917,10 @@ CursesConvertMouseHighlightToCoords(int *startX,
  * SIDE EFFECTS:
  * STRATEGY:
  * REVISION HISTORY:
- *	Name	Date		Description			     
- *	----	----		-----------			     
- *	jimmy	2/24/93		Initial version			     
- * 
+ *	Name	Date		Description
+ *	----	----		-----------
+ *	jimmy	2/24/93		Initial version
+ *
  *********************************************************************/
 DEFCMD(update-scrolled-highlight,CursesUpdateScrolledHighlight,TCL_EXACT,NULL,swat_prog.mouse,
 "Usage:\n\
@@ -640,7 +955,7 @@ See also:\n\
 	 * and then started highlighting stuff (the dweeb ;) so we must
 	 * initialize our struct to reflect the new state of affairs
 	 */
-	if (CursesConvertMouseHighlightToCoords(&startX, &startY, 
+	if (CursesConvertMouseHighlightToCoords(&startX, &startY,
 						&endX, &endY) == (char *)NULL)
 	{
 	    return TCL_OK;
@@ -692,12 +1007,12 @@ See also:\n\
  *
  *	    	    when not in scroll mode, lines is the number of lines
  *	    	    that the command line is scrolled
- *	    	
+ *
  * REVISION HISTORY:
- *	Name	Date		Description			     
- *	----	----		-----------			     
- *	jimmy	2/17/93		Initial version			     
- * 
+ *	Name	Date		Description
+ *	----	----		-----------
+ *	jimmy	2/17/93		Initial version
+ *
  *********************************************************************/
 static void
 CursesUpdateHighlight(int lines)
@@ -713,7 +1028,7 @@ CursesUpdateHighlight(int lines)
     /*
      * If the highlight is stored in the mouse_highlight tcl variable...
      */
-    if (CursesConvertMouseHighlightToCoords(&startX, &startY, 
+    if (CursesConvertMouseHighlightToCoords(&startX, &startY,
 					    &endX, &endY) != (char *) NULL) {
 	/*
 	 * ...then check if it's in the command window; if not, we have
@@ -725,7 +1040,7 @@ CursesUpdateHighlight(int lines)
 
     /*
      * 2 bytes be character in the frame buffer, so the number of bytes
-     * in a row is the number of columns * 2 
+     * in a row is the number of columns * 2
      */
     columns = CursesNumColumns();
     row_bytes = (columns << 1);
@@ -779,7 +1094,7 @@ CursesUpdateHighlight(int lines)
 	    /* let's see if the region will end up on the screen
 	     */
 	    lp = lineCur;
-	    
+
 	    while (lp != NULL && lp != highlightinfo.lastline &&
 		       	     lp != highlightinfo.firstline)
 	    {
@@ -817,14 +1132,14 @@ CursesUpdateHighlight(int lines)
 	{
 	    if (lp == highlightinfo.firstline)
 	    {
-	    	while (endY < cmdWin->_maxy && 
+	    	while (endY < cmdWin->_maxy &&
 		       lp != highlightinfo.lastline)
 	    	{
 		    endY++;
 		    lp = lp->prev;
 	    	}
 	    }
-	    else 
+	    else
 	    {
 	    	startY = 0;
 	    }
@@ -840,7 +1155,7 @@ CursesUpdateHighlight(int lines)
 	Mouse_SetMouseHighlight(vidStart, vidEnd);
 	return;
     }	/* if scroll mode and not already on the screen */
-	
+
     /*
      * If we get here, we have not been scrolling, which means if there's
      * any highlight it must be indicated by the mouse_highlight variable.
@@ -863,11 +1178,11 @@ CursesUpdateHighlight(int lines)
      * the screen then do nothing
      */
     if (maxvalue < 0 && highlightinfo.partly_on_screen == 0)
-    {	
+    {
 	Tcl_SetVar(interp, "mouse_highlight", "", TRUE);
 	return;
     }
-	
+
     if (minvalue < 0)
     {
 	LinePtr	lp=lineCur;
@@ -881,7 +1196,7 @@ CursesUpdateHighlight(int lines)
 	{
 	    highlightinfo.active = 1;
 	    /* ok this is our first step off the screen for the highlighted
-	     * region, set up all the relevant info 
+	     * region, set up all the relevant info
 	     */
 	    if (lp == NULL)
 	    {
@@ -934,7 +1249,7 @@ CursesUpdateHighlight(int lines)
 	{
 	    int	deltaheight = 0;
 	    /*
-	     * ok, so we already have some of the highlighted region off 
+	     * ok, so we already have some of the highlighted region off
 	     * screen, so just adjust the highlightinfo.lastline as the
 	     * first line is not changing (I think)
 	     */
@@ -946,7 +1261,7 @@ CursesUpdateHighlight(int lines)
 	     * then we have found the lastline field for our highlightinfo
 	     */
 	    while (height > 0 && lines > 0 && lp != NULL)
-	    {	
+	    {
 	    	lptemp = lp;   	/* remember last one in case we go too far */
 	    	lp = lp->prev;
 	    	--height;
@@ -966,7 +1281,7 @@ CursesUpdateHighlight(int lines)
 	    highlightinfo.on_screen_height -= deltaheight;
 	}
     }
-	
+
     if (minvalue > 0 || highlightinfo.partly_on_screen == 1)
     {
 	Mouse_SetMouseHighlight(value1, value2);
@@ -982,13 +1297,13 @@ CursesUpdateHighlight(int lines)
  * SIDE EFFECTS:
  * STRATEGY:
  * REVISION HISTORY:
- *	Name	Date		Description			     
- *	----	----		-----------			     
- *	jimmy	3/ 1/93		Initial version			     
- * 
+ *	Name	Date		Description
+ *	----	----		-----------
+ *	jimmy	3/ 1/93		Initial version
+ *
  *********************************************************************/
 static void
-CursesUpdateNewMouseHighlight(int lines) 
+CursesUpdateNewMouseHighlight(int lines)
 {
     int 	value1, value2, xvalue, oldvalue1, oldvalue2;
     char	*hl;
@@ -1004,7 +1319,7 @@ CursesUpdateNewMouseHighlight(int lines)
      * Leave things alone if there's no highlight or it's not in the
      * command window.
      */
-    if (CursesConvertMouseHighlightToCoords(&startX, &startY, 
+    if (CursesConvertMouseHighlightToCoords(&startX, &startY,
 					    &endX, &endY) == (char *) NULL)
 	 return;
     if ((startY >= cmdWin->_maxy) || (endY < cmdWin->_begy))
@@ -1043,9 +1358,9 @@ CursesUpdateNewMouseHighlight(int lines)
 	    if (oldvalue2 == max_screen)
 	    {
 		/* now we need to see if the thing is partially or
-		 * totally on the screen 
+		 * totally on the screen
 		 */
-		
+
 		lp = highlightinfo.firstline;
 		highlightinfo.on_screen_height = chopped_height;
 		while (lp != highlightinfo.lastline)
@@ -1059,7 +1374,7 @@ CursesUpdateNewMouseHighlight(int lines)
 		}
 		if (lp != lineScreenEnd)
 		{
-		    /* ok, we are totally on the screen 
+		    /* ok, we are totally on the screen
 		     */
 		    value2 = (value1/row_bytes) * row_bytes;
 		    value2 += row_bytes * highlightinfo.on_screen_height;
@@ -1069,7 +1384,7 @@ CursesUpdateNewMouseHighlight(int lines)
 		{
 		    if (lineScreenEnd == highlightinfo.lastline)
 		    {
-		    	value2 = max_screen - row_bytes + 2 + 
+		    	value2 = max_screen - row_bytes + 2 +
 			        	highlightinfo.last_offset;
 		    }
 		    else
@@ -1113,7 +1428,7 @@ CursesUpdateNewMouseHighlight(int lines)
 
 	    if (lp != lineCur)
 	    {
-		/* ok, we are totally on the screen 
+		/* ok, we are totally on the screen
 		 */
 		value1 = (value2/row_bytes) * row_bytes;
 		value1 -= row_bytes * highlightinfo.on_screen_height;
@@ -1137,7 +1452,7 @@ CursesUpdateNewMouseHighlight(int lines)
 	return;
     }
     /* so we were completely off the screen, we need to make sure that
-     * we didn't creep onto the screen 
+     * we didn't creep onto the screen
      */
     highlightinfo.on_screen_height = 0;
     if (forward)
@@ -1151,8 +1466,8 @@ CursesUpdateNewMouseHighlight(int lines)
 	{
 	    int	ypos = cmdWin->_maxy - 1;
 	    /*
-	     * Either we didn't get on the screen at all, or we got 
-	     * completely on the screen so we don't overlap the boundary 
+	     * Either we didn't get on the screen at all, or we got
+	     * completely on the screen so we don't overlap the boundary
 	     * so lets see if we are on the screen
 	     */
 	    lp = lineScreenEnd;
@@ -1167,14 +1482,14 @@ CursesUpdateNewMouseHighlight(int lines)
 		return;
 	    }
 	    /* so ypos tells us the y position of the bottom, lets see
-	     * if the top is still on the screen 
+	     * if the top is still on the screen
 	     */
 	    highlightinfo.on_screen_height = 1;
 	    while (lp != highlightinfo.firstline)
 	    {
 		highlightinfo.on_screen_height++;
 		if (lp == lineCur)
-		{   
+		{
 		    break;
 		}
 		lp = lp->next;
@@ -1259,7 +1574,7 @@ CursesUpdateNewMouseHighlight(int lines)
 	    }
 	    if (lp == highlightinfo.lastline)
 	    {
-		value2 = ((ypos + highlightinfo.on_screen_height - 1) 
+		value2 = ((ypos + highlightinfo.on_screen_height - 1)
 			  * row_bytes) + highlightinfo.last_offset;
 	    }
 	    else
@@ -1267,11 +1582,11 @@ CursesUpdateNewMouseHighlight(int lines)
 		value2 = (cmdWin->_maxy * row_bytes) - 2;
 	    }
 	    value1 = (ypos * row_bytes) + highlightinfo.first_offset;
-	}	    
-	else    
-	{		    	
+	}
+	else
+	{
 	    int height = 1;
-	    
+
 	    /* ok, so we got to the first highlighted stuff on the screen
 	     * so set up the mouse_highlight variable and set the
 	     * on_screen_height
@@ -1308,7 +1623,7 @@ CursesUpdateNewMouseHighlight(int lines)
 }
 
 /*
- * end of _MSDOS - mouse and highlighting stuff 
+ * end of _MSDOS - mouse and highlighting stuff
  */
 
 
@@ -1321,10 +1636,10 @@ CursesUpdateNewMouseHighlight(int lines)
  * SIDE EFFECTS:
  * STRATEGY:
  * REVISION HISTORY:
- *	Name	Date		Description			     
- *	----	----		-----------			     
- *	jimmy	2/ 8/93		Initial version			     
- * 
+ *	Name	Date		Description
+ *	----	----		-----------
+ *	jimmy	2/ 8/93		Initial version
+ *
  *********************************************************************/
 DEFCMD(invert-screen-region,CursesInvertScreenRegion,TCL_EXACT,NULL,swat_prog.mouse,
 "INTERNAL\n\
@@ -1373,10 +1688,10 @@ See also:\n\
  * SIDE EFFECTS:    none
  * STRATEGY:
  * REVISION HISTORY:
- *	Name	Date		Description			     
- *	----	----		-----------			     
- *	jenny	6/28/93		Initial version			     
- * 
+ *	Name	Date		Description
+ *	----	----		-----------
+ *	jenny	6/28/93		Initial version
+ *
  *********************************************************************/
 static void
 CursesToggleHighlight(int onOff, int saveRemove)
@@ -1387,7 +1702,7 @@ CursesToggleHighlight(int onOff, int saveRemove)
      * Leave things alone if there's no highlight or it's not in the
      * command window.
      */
-    if (CursesConvertMouseHighlightToCoords(&startX, &startY, 
+    if (CursesConvertMouseHighlightToCoords(&startX, &startY,
 					    &endX, &endY) == (char *) NULL)
 	 return;
     if ((startY >= cmdWin->_maxy) || (endY < cmdWin->_begy))
@@ -1458,7 +1773,7 @@ scroll(WINDOW *win)
 	 * If terminal doesn't autowrap or it eats a newline after, feed it
 	 * a newline to either do the scroll (!AM) or to give it something
 	 * to munch on (XN). Otherwise, we assume the character we just put
-	 * out will scroll the screen. 
+	 * out will scroll the screen.
 	 */
 	if (!AM || XN) {
 	    _putchar('\n');
@@ -1475,11 +1790,11 @@ scroll(WINDOW *win)
 	 * command window.
 	 */
 	LinePtr	lp;
-	
+
 	if (numSaved < maxSaved) {
 	    lp = (LinePtr)malloc_tagged(sizeof(LineRec), TAG_CURSES);
 	    lp->line = win->_y[0];
-	    win->_y[0] = (cursesChar *)malloc_tagged(win->_maxx 
+	    win->_y[0] = (cursesChar *)malloc_tagged(win->_maxx
 						     * sizeof(cursesChar),
 						     TAG_CURSES);
 	    numSaved++;
@@ -1488,7 +1803,7 @@ scroll(WINDOW *win)
 	     * Take the last record off the end and use it.
 	     */
 	    cursesChar    *l;
-	    
+
 	    lp = lineTail;
 	    lineTail = lp->prev;
 	    lineTail->next = NullLine;
@@ -1573,7 +1888,7 @@ See also:\n\
 #elif defined(_WIN32)
     beep();
 #elif defined(_MSDOS)
-    fflush(stdout);    
+    fflush(stdout);
 #endif
     return(TCL_OK);
 }
@@ -1615,7 +1930,7 @@ CursesScrollInput(unsigned char c, CursesInputState *state)
 	return;
     }
 #endif
-    
+
     if (c == forwPage) {
 	/*
 	 * Get to first line of next page
@@ -1868,7 +2183,7 @@ CursesScrollInput(unsigned char c, CursesInputState *state)
 #if defined(_MSDOS)
 	{
 	    int 	value1, value2;
-	    
+
 	    if (CursesGetMouseHighlight(&value1, &value2) != NULL)
 	    {
 		DosInvertScreenRegion(value1, value2);
@@ -1896,7 +2211,7 @@ CursesScrollInput(unsigned char c, CursesInputState *state)
  *		    freed.
  *	    	    inProc is set to CursesInputChar
  *
- * STRATEGY:	    
+ * STRATEGY:
  *
  * REVISION HISTORY:
  *	Name	Date		Description
@@ -1922,7 +2237,7 @@ CursesEndScroll(CursesInputState *state)
     for (i = cmdWin->_maxy-1, lp = lineHead; i >= 0; i--) {
 	cmdWin->_y[i] = lp->line;
 	lineHead = lp->next;
-	
+
 #if defined(_MSDOS)
 	/*
 	 * We must make sure to update our highlighted region which
@@ -1941,7 +2256,7 @@ CursesEndScroll(CursesInputState *state)
 	    /*
 	     * We always hit the lastline first, if the firstline is
 	     * different then just update the last line to the next one
-	     * if it's the same then the whole thing is back on the 
+	     * if it's the same then the whole thing is back on the
 	     * screen so just null out the pointers
 	     */
 	    if (highlightinfo.firstline == lp)
@@ -1963,7 +2278,7 @@ CursesEndScroll(CursesInputState *state)
     scrollok(cmdWin, 1);
     touchwin(cmdWin);
     wrefresh(cmdWin);
-    
+
     lineCur = NULL;
     state->inProc = CursesInputChar;
 #if defined(_MSDOS)
@@ -1987,7 +2302,7 @@ CursesEndScroll(CursesInputState *state)
 	else
 	{
 	    int startVid, endVid;
-	    
+
 	    startVid = highlightinfo.first_offset;
 	    endVid = (highlightinfo.on_screen_height - 1) *
 		CursesNumColumns();
@@ -1995,7 +2310,7 @@ CursesEndScroll(CursesInputState *state)
 	    Mouse_SetMouseHighlight(startVid, endVid);
 	}
     }
-    
+
     highlightinfo.scroll_mode = 0;
     Tcl_Eval(interp, "unhighlight-mouse", 0, NULL);
     /*
@@ -2049,7 +2364,7 @@ CursesStartScroll(char c, CursesInputState *state)
 	state->inProc = CursesScrollInput;
 #if defined(_MSDOS)
 	highlightinfo.scroll_mode = 1;
-	if (CursesConvertMouseHighlightToCoords(&startX, &startY, 
+	if (CursesConvertMouseHighlightToCoords(&startX, &startY,
 						&endX, &endY) == (char *)NULL)
 	{
 	    startY = endY = -1;
@@ -2147,7 +2462,7 @@ CursesBackSpace(WINDOW *win, Boolean destroy)
 	    waddstr(win, (WADDSTR_CAST)"\b \b");
 	} else {
 	    waddch(win, '\b');
-	}	    
+	}
     }
 #if defined (_MSDOS)
 {
@@ -2166,7 +2481,7 @@ CursesBackSpace(WINDOW *win, Boolean destroy)
 	/*
 	 * If we're on the same line as the highlight we need to see if
 	 * our X position falls within it; if not, scoot.
-	 */ 
+	 */
 	if ((curY == endY) && !((curX >= (startX / 2)) && (curX <= (endX / 2))))
 	    return;
 	/*
@@ -2218,7 +2533,7 @@ CursesEndMatch(Rpc_Opaque   data,
      * Make sure the cursor moves...
      */
     fflush(stdout);
-    
+
     /*
      * Nuke the event that called us
      */
@@ -2227,7 +2542,7 @@ CursesEndMatch(Rpc_Opaque   data,
 
     return(FALSE);
 }
-    
+
 
 /***********************************************************************
  *				CursesShowMatch
@@ -2415,7 +2730,7 @@ CursesShowMatch(char	open,	/* Character to match */
 		nesting++;
 		continue;
 	    }
-		
+
 	    /*
 	     * Unescaped closer -- up the nesting level so we know the next
 	     * opener isn't really the one we want.
@@ -2456,7 +2771,7 @@ CursesShowMatch(char	open,	/* Character to match */
 static void
 CursesHonk(void)
 {
-#if !defined(_WIN32)  
+#if !defined(_WIN32)
 		    write(_tty_ch, "\007", 1);
 #else
 		    beep();
@@ -2522,7 +2837,7 @@ CursesInputChar(unsigned char c, CursesInputState *state)
 		    CursesHonk();
 		}
 	    } else {
-		if (--state->cursPos >= 0) { 
+		if (--state->cursPos >= 0) {
 		    /*
 		     * If any characters in the line, nuke one
 		     */
@@ -2543,8 +2858,8 @@ CursesInputChar(unsigned char c, CursesInputState *state)
 		     */
 		    curX = curWin->_curx;
 		    curY = curWin->_cury;
-		    waddstr(curWin, ((WADDSTR_CAST)Buf_GetAll(state->input, 
-							      &len)) + 
+		    waddstr(curWin, ((WADDSTR_CAST)Buf_GetAll(state->input,
+							      &len)) +
 			    state->cursPos);
 		    waddch(curWin, ' ');
  		    curWin->_curx = curX;
@@ -2566,8 +2881,8 @@ CursesInputChar(unsigned char c, CursesInputState *state)
 	     * in the middle of everything
 	     */
 	    if (state->cursPos < state->lineLength) {
-		waddstr(curWin, ((WADDSTR_CAST)Buf_GetAll(state->input, 
-							  &len)) + 
+		waddstr(curWin, ((WADDSTR_CAST)Buf_GetAll(state->input,
+							  &len)) +
 			state->cursPos);
 		state->cursPos = state->lineLength;
 	    }
@@ -2638,9 +2953,9 @@ CursesInputChar(unsigned char c, CursesInputState *state)
 		 * Nuke those bytes, saving 'em in cutBuf
 		 */
 		Buf_DelBytes(cutBuf, cutLength);
-		Buf_AddBytes(cutBuf, 
+		Buf_AddBytes(cutBuf,
 			     oldLength - state->lineLength,
-			     Buf_GetAll(state->input, &len) 
+			     Buf_GetAll(state->input, &len)
 			      + state->cursPos);
 		cutLength = oldLength - state->lineLength;
 		Buf_DelBytesMiddle(state->input,
@@ -2649,8 +2964,8 @@ CursesInputChar(unsigned char c, CursesInputState *state)
 
 		curX = curWin->_curx;
 		curY = curWin->_cury;
-		waddstr(curWin, ((WADDSTR_CAST)Buf_GetAll(state->input, 
-							  &len)) + 
+		waddstr(curWin, ((WADDSTR_CAST)Buf_GetAll(state->input,
+							  &len)) +
 			state->cursPos);
 		while (oldLength-- > state->lineLength) {
 		    waddch(curWin, ' ');
@@ -2666,20 +2981,20 @@ CursesInputChar(unsigned char c, CursesInputState *state)
 	} else if (c == state->cleChars[CLEC_YANK]) {
 	    if (cutLength) {
 		char    tempC;
-		
+
 		/*
 		 * Set the mark here.
 		 */
 		state->markPos = state->cursPos;
-		
+
 		/*
 		 * Spew the cut buffer out right here.
 		 */
 		waddstr(curWin, (WADDSTR_CAST)Buf_GetAll(cutBuf, &len));
-		waddstr(curWin, ((WADDSTR_CAST)Buf_GetAll(state->input, 
-							  &len)) + 
+		waddstr(curWin, ((WADDSTR_CAST)Buf_GetAll(state->input,
+							  &len)) +
 			state->cursPos);
-		
+
 		/*
 		 * Add the bytes in at the proper location, natch'
 		 */
@@ -2689,7 +3004,7 @@ CursesInputChar(unsigned char c, CursesInputState *state)
 				   state->cursPos);
 		state->cursPos += cutLength;
 		state->lineLength += cutLength;
-		
+
 		/*
 		 * Do the rewind, fast-forward trick again.
 		 */
@@ -2697,20 +3012,20 @@ CursesInputChar(unsigned char c, CursesInputState *state)
 		while (len--) {
 		    CursesBackSpace(curWin, FALSE);
 		}
-		
+
 		tempC = cp[state->cursPos];
 		cp[state->cursPos]= 0;
 		waddstr(curWin, (WADDSTR_CAST)cp);
 		cp[state->cursPos] = tempC;
 	    }
 	} else if (state->lineLength && /* XXXdan verify = (not ==) is okay */
-		   (clec = index(state->cleChars, c)) &&  
+		   (clec = index(state->cleChars, c)) &&
 		   ((c != '\004') || (state->cursPos < state->lineLength)))
 	{
 	    switch (clec-state->cleChars) {
 		case CLEC_BEGINNING_OF_LINE:
 		    /*
-		     * Count state->cursPos back to 
+		     * Count state->cursPos back to
 		     * the beginning of the line.
 		     */
 		    while (state->cursPos--) {
@@ -2723,8 +3038,8 @@ CursesInputChar(unsigned char c, CursesInputState *state)
 		     * Move state->cursPos to lineLength
 		     */
 		    if (state->cursPos < state->lineLength) {
-			waddstr(curWin, 
-				((WADDSTR_CAST)Buf_GetAll(state->input, 
+			waddstr(curWin,
+				((WADDSTR_CAST)Buf_GetAll(state->input,
 							  &len)) +
 				state->cursPos);
 		    state->cursPos = state->lineLength;
@@ -2745,7 +3060,7 @@ CursesInputChar(unsigned char c, CursesInputState *state)
 		     */
 		    if (state->cursPos < state->lineLength) {
 			waddch(curWin,
-			       Buf_GetAll(state->input, 
+			       Buf_GetAll(state->input,
 					  &len)[state->cursPos]);
 			state->cursPos++;
 		    }
@@ -2765,10 +3080,10 @@ CursesInputChar(unsigned char c, CursesInputState *state)
 			}
 			/*
 			 * Still more to go -- get back to the preceding
-			 * whitespace or the start of the line, 
+			 * whitespace or the start of the line,
 			 * whichever comes first.
 			 */
-			
+
 			while (state->cursPos &&
 			       !(index(state->wordChars, *cp)))
 			{
@@ -2796,7 +3111,7 @@ CursesInputChar(unsigned char c, CursesInputState *state)
 			 * whitespace or the start of the line, whichever
 			 * comes first.
 			 */
-			
+
 			while ((state->cursPos < state->lineLength) &&
 			       !(index(state->wordChars, *cp)))
 			{
@@ -2831,18 +3146,18 @@ CursesInputChar(unsigned char c, CursesInputState *state)
 		    break;
 		case CLEC_KILL_REGION:
 		    /*
-		     * If there's a mark, then kill the text 
+		     * If there's a mark, then kill the text
 		     * between the cursor and the mark.
 		     */
 		    if ((state->markPos >= 0) &&
 			(state->markPos != state->cursPos))
 		    {
 			int    tempPos;
-			
+
 			if (state->markPos > state->cursPos) {
 			    char   tempC;
 			    /*
-			     * The mark is ahead of the cursor, 
+			     * The mark is ahead of the cursor,
 			     * so we'll have to fast forward the
 			     * cursor there in order to backspace
 			     * over the selection.
@@ -2850,17 +3165,17 @@ CursesInputChar(unsigned char c, CursesInputState *state)
 			    cp = (char *)Buf_GetAll(state->input, &len);
 			    tempC = cp[state->markPos];
 			    cp[state->markPos] = 0;
-			    waddstr(curWin, (WADDSTR_CAST)(cp + 
+			    waddstr(curWin, (WADDSTR_CAST)(cp +
 							   state->cursPos));
 			    cp[state->markPos] = tempC;
-			    
+
 			    tempPos = state->cursPos;
 			    state->cursPos = state->markPos;
 			    state->markPos = tempPos;
 			}
-			
+
 			/*
-			 * At this point, the mark should be behind us, 
+			 * At this point, the mark should be behind us,
 			 * so let's just back up and erase until
 			 * state->cursPos = state->markPos.
 			 */
@@ -2870,7 +3185,7 @@ CursesInputChar(unsigned char c, CursesInputState *state)
 			    state->lineLength--;
 			    state->cursPos--;
 			}
-			
+
 			Buf_DelBytes(cutBuf, cutLength);
 			cutLength = tempPos - state->cursPos;
 			Buf_AddBytes(cutBuf, cutLength,
@@ -2879,12 +3194,12 @@ CursesInputChar(unsigned char c, CursesInputState *state)
 			Buf_DelBytesMiddle(state->input,
 					   tempPos - state->cursPos,
 					   state->cursPos);
-			
+
 			curX = curWin->_curx;
 			curY = curWin->_cury;
-			waddstr(curWin, 
-				((WADDSTR_CAST)Buf_GetAll(state->input, 
-							  &len)) + 
+			waddstr(curWin,
+				((WADDSTR_CAST)Buf_GetAll(state->input,
+							  &len)) +
 				state->cursPos);
 
 			while (tempPos-- > state->cursPos) {
@@ -2893,13 +3208,13 @@ CursesInputChar(unsigned char c, CursesInputState *state)
 			curWin->_curx = curX;
 			curWin->_cury = curY;
 		    } else {
-			/*		
+			/*
 			 * Kill the rest of the line by spewing to the end,
 			 * then backspacing over it all.
 			 */
 			if (state->cursPos < state->lineLength) {
-			    waddstr(curWin, 
-				    ((WADDSTR_CAST)Buf_GetAll(state->input, 
+			    waddstr(curWin,
+				    ((WADDSTR_CAST)Buf_GetAll(state->input,
 							      &len)) +
 				    state->cursPos);
 			    Buf_DelBytes(cutBuf, cutLength);
@@ -2910,7 +3225,7 @@ CursesInputChar(unsigned char c, CursesInputState *state)
 			    cutLength = state->lineLength - state->cursPos;
 			    Buf_DelBytes(state->input,
 					 state->lineLength - state->cursPos);
-			    while (state->lineLength > state->cursPos) { 
+			    while (state->lineLength > state->cursPos) {
 				CursesBackSpace(curWin, TRUE);
 				state->lineLength--;
 			    }
@@ -2940,13 +3255,13 @@ CursesInputChar(unsigned char c, CursesInputState *state)
 	     */
 /*	    CursesInputChar('\013'); */
 	    /*
-	     * Sync up state->cursPos with state->lineLength to magically 
+	     * Sync up state->cursPos with state->lineLength to magically
 	     * solve the problem of reading a line where the guy hit
 	     * return in the middle of everything
 	     */
 	    if (state->cursPos < state->lineLength) {
 		waddstr(curWin,
-			((WADDSTR_CAST)Buf_GetAll(state->input, &len)) + 
+			((WADDSTR_CAST)Buf_GetAll(state->input, &len)) +
 			state->cursPos);
 		state->cursPos = state->lineLength;
 	    }
@@ -2965,17 +3280,17 @@ CursesInputChar(unsigned char c, CursesInputState *state)
 		(c == END_ASCII))
 	    {
 		if (c == UP_ARROW_ASCII) {
-		    /* 
+		    /*
 		     * make up-arrow act like cntl-p since it
 		     * isn't bound to scroll up
 		     */
-		    c = 0x10;  
+		    c = 0x10;
 		} else if (c == DOWN_ARROW_ASCII) {
-		    /* 
-		     * make down-arrow act like cntl-n since it 
+		    /*
+		     * make down-arrow act like cntl-n since it
 		     * isn't bound to scroll up
 		     */
-		    c = 0x0E;  
+		    c = 0x0E;
 		} else {
 		    /*
 		     * don't do anything for the other special keys
@@ -2988,15 +3303,15 @@ CursesInputChar(unsigned char c, CursesInputState *state)
 			    + state->cursPos);
 		    state->cursPos = state->lineLength;
 		}
-		
+
 		Buf_AddByte(state->input, (Byte)c);
 		state->flags |= CISF_LINEREADY;
-	    } 
+	    }
 	    /*
 	     * Space, tab, newline or other printable character -- store it
 	     * away and up the line length
 	     */
-	    else 
+	    else
 #endif   /* _WIN32 case */
 		if (c == '\t') {
 
@@ -3005,7 +3320,7 @@ CursesInputChar(unsigned char c, CursesInputState *state)
 		 * does cntl-] cause immediate return?
 		 */
 		if (index(state->endChars, '\035') != NULL) {
-		    /* 
+		    /*
 		     * Tab - if no white-space yet, then treat as cmd
 		     *       completion, else space to next tab-stop
 		     */
@@ -3013,7 +3328,7 @@ CursesInputChar(unsigned char c, CursesInputState *state)
 		    Boolean noWhiteSpace = TRUE;
 		    char *buff;
 		    int bufsize;
-		    
+
 		    buff = (char *)Buf_GetAll(state->input, &bufsize);
 		    if (bufsize == 0) {
 			noWhiteSpace = FALSE;
@@ -3034,8 +3349,8 @@ CursesInputChar(unsigned char c, CursesInputState *state)
 			 */
 			if (state->cursPos < state->lineLength) {
 			    waddstr(curWin,
-				    ((WADDSTR_CAST)Buf_GetAll(state->input, 
-							      &len)) + 
+				    ((WADDSTR_CAST)Buf_GetAll(state->input,
+							      &len)) +
 				    state->cursPos);
 			    state->cursPos = state->lineLength;
 			}
@@ -3049,7 +3364,7 @@ CursesInputChar(unsigned char c, CursesInputState *state)
 		    tabs2spaces = TRUE;
 		}
 		if (tabs2spaces == TRUE) {
-		    /*  
+		    /*
 
 		     * Turn tabs into spaces so they can be deleted properly
 		     */
@@ -3063,18 +3378,18 @@ CursesInputChar(unsigned char c, CursesInputState *state)
 		if (c == '\n') {
 		    /*
 		     * Sync up state->cursPos with state->lineLength to
-		     * magically solve the problem of reading a line where 
+		     * magically solve the problem of reading a line where
 		     * the guy hit return in the middle of everything
 		     */
 		    if (state->cursPos < state->lineLength) {
 			waddstr(curWin,
-				((WADDSTR_CAST)Buf_GetAll(state->input, 
-							  &len)) + 
+				((WADDSTR_CAST)Buf_GetAll(state->input,
+							  &len)) +
 				state->cursPos);
 			state->cursPos = state->lineLength;
 		    }
-		} 
-		if (state->cursPos == state->lineLength) { 
+		}
+		if (state->cursPos == state->lineLength) {
 		    Buf_AddByte(state->input, (Byte)c);
 		    waddch(curWin, c);
 		} else {
@@ -3095,7 +3410,7 @@ CursesInputChar(unsigned char c, CursesInputState *state)
 		    /*
 		     * Well, I was right. It screwed up, so let's try
 		     * going to the beginning of the line and spewing
-		     * out 
+		     * out
 		     */
 		    while (len--) {
 			CursesBackSpace(curWin, FALSE);
@@ -3149,7 +3464,7 @@ check_end:
 	    int     	braces,
 			brackets,
 			numBytes;
-	    
+
 	    cp = (char *)Buf_GetAll(state->input, &cc);
 	    for (braces = 0, brackets = 0; cc > 0; cp++, cc--) {
 		switch (*cp) {
@@ -3208,12 +3523,12 @@ check_end:
  * CALLED BY:	    CursesReadInput
  * RETURN:  	    true if key is bound to something non-null
  * SIDE EFFECTS:    function executed (maybe)
- * STRATEGY:	    
+ * STRATEGY:
  * REVISION HISTORY:
- *	Name	Date		Description			     
- *	----	----		-----------			     
- *	jimmy	1/25/93		Initial version			     
- * 
+ *	Name	Date		Description
+ *	----	----		-----------
+ *	jimmy	1/25/93		Initial version
+ *
  *********************************************************************/
 static int
 CursesCheckKeyBinding(unsigned char c)
@@ -3225,6 +3540,21 @@ CursesCheckKeyBinding(unsigned char c)
     Tcl_Eval(interp, keyBindings[c], 0, NULL);
     return 1;
 }
+
+#if defined(unix) || defined(_LINUX)
+int getch2() {
+   static int ch=-1, fd=0;
+   struct termios new, old;
+   fd=fileno(stdin);
+   tcgetattr(fd, &old);
+   new=old;
+   new.c_lflag &= ~(ICANON|ECHO);
+   tcsetattr(fd, TCSANOW, &new);
+   ch = getchar();
+   tcsetattr(fd, TCSANOW, &old);
+   return ch;
+}
+#endif
 
 /***********************************************************************
  *				CursesReadInput
@@ -3254,20 +3584,65 @@ CursesReadInput(int 	    stream,
     unsigned long chr;
     CursesInputState	*istate = (CursesInputState *)data;
 
-#if defined(unix)
-    i = read(0, buf, sizeof(buf));
-    chr = buf[0];
+#if defined(unix) || defined(_LINUX)
+    chr = getch2();
+#if defined(_LINUX)
+    /* map ESC code to PC like scan codes for selected codes */
+    if (chr == 0x1B) {
+	(void)getch2();
+	chr = getch2();
+	switch ( chr ) {
+	    case 'A':
+	    	chr = 0xC8;
+		break;
+	    case 'B':
+    	    	chr = 0xD0;
+    		break;
+	    case 'C':
+	    	chr = 0xCD;
+		break;
+	    case 'D':
+    	    	chr = 0xCB;
+    		break;
+	    case 0x35:	/* page up */
+		(void)getch2();	/* skip 0x7E following */
+	    	chr = 0xC9;
+		break;
+	    case 0x36:	/* page down */
+		(void)getch2();	/* skip 0x7E following */
+    	    	chr = 0xD1;
+    		break;
+	    case 0x48:	/* pos1 */
+	 	//(void)getch2();	/* skip 0x7E following */
+        	chr = 0xC7;
+        	break;
+	    case 0x46:	/* end */
+		//(void)getch2();	/* skip 0x7E following */
+            	chr = 0xCF;
+            	break;
+
+	    default:
+	    	chr = 0x80;
+		break;
+	}
+    }
+#endif
+    buf[0] = chr;
+    i = 1;
+    if (buf[0] == '\r') {
+	buf[0] = '\n';
+    }
 #elif defined(_WIN32)
     chr = getch();
     if ((chr & 0x01000000) != 0) {
-	/* 
-	 * detected a mouse click 
+	/*
+	 * detected a mouse click
 	 */
 	char execString[19 + 4 + 1 + 4 + 1 + 5 + 1];
 
-	sprintf(execString, "win32-button-press %d %d %s", 
+	sprintf(execString, "win32-button-press %d %d %s",
 		(chr & 0xff00) >> 8,
-		chr & 0xff, 
+		chr & 0xff,
 		(((chr & 0xff0000) >> 16) == 1) ? "left" : "right");
 	Tcl_Eval(interp, execString, 0, NULL);
 	return;
@@ -3293,9 +3668,9 @@ CursesReadInput(int 	    stream,
 	buf[0] = '\n';
     }
 
-    /* 
+    /*
      * if the low byte is zero then we have a non-ascii value, the high byte
-     * is the scan code, so we translate the scan code into a non-ascii 
+     * is the scan code, so we translate the scan code into a non-ascii
      * value by adding 0xff
      */
     i = 1;
@@ -3305,7 +3680,7 @@ CursesReadInput(int 	    stream,
     }
 #endif
 
-    /*	
+    /*
      * see if this key is currently bound to anything, if so then
      * execute whatever tcl routine it's bound to and be done with it
      */
@@ -3321,7 +3696,7 @@ CursesReadInput(int 	    stream,
 	    Rpc_EventDelete(showMatchEvent);
 	    showMatchEvent = 0;
 	}
-		
+
 	(* istate->inProc)(*cp, istate);
     }
 }
@@ -3332,14 +3707,14 @@ CursesReadInput(int 	    stream,
  *********************************************************************
  * SYNOPSIS: 	binds a key to a function
  * CALLED BY:	global
- * RETURN:     
+ * RETURN:
  * SIDE EFFECTS:
  * STRATEGY:
  * REVISION HISTORY:
- *	Name	Date		Description			     
- *	----	----		-----------			     
- *	jimmy	1/27/93		Initial version			     
- * 
+ *	Name	Date		Description
+ *	----	----		-----------
+ *	jimmy	1/27/93		Initial version
+ *
  *********************************************************************/
 DEFCMD(bind-key,CursesBindKey,TCL_EXACT,NULL,support.binding,
 "Usage:\n\
@@ -3382,14 +3757,14 @@ See also:\n\
  *********************************************************************
  * SYNOPSIS: 	binds a key to a function
  * CALLED BY:	global
- * RETURN:     
+ * RETURN:
  * SIDE EFFECTS:
  * STRATEGY:
  * REVISION HISTORY:
- *	Name	Date		Description			     
- *	----	----		-----------			     
- *	jimmy	1/27/93		Initial version			     
- * 
+ *	Name	Date		Description
+ *	----	----		-----------
+ *	jimmy	1/27/93		Initial version
+ *
  *********************************************************************/
 DEFCMD(unbind-key,CursesUnbindKey,TCL_EXACT,NULL,support.binding,
 "Usage:\n\
@@ -3428,14 +3803,14 @@ See also:\n\
  *********************************************************************
  * SYNOPSIS: 	binds a key to a function
  * CALLED BY:	global
- * RETURN:     
+ * RETURN:
  * SIDE EFFECTS:
  * STRATEGY:
  * REVISION HISTORY:
- *	Name	Date		Description			     
- *	----	----		-----------			     
- *	jimmy	1/27/93		Initial version			     
- * 
+ *	Name	Date		Description
+ *	----	----		-----------
+ *	jimmy	1/27/93		Initial version
+ *
  *********************************************************************/
 DEFCMD(get-key-binding,CursesGetKeyBinding,TCL_EXACT,NULL,support.binding,
 "Usage:\n\
@@ -3531,6 +3906,13 @@ See also:\n\
     int	    	    	length;
     CursesInputState	state;
 
+#ifdef _WIN32
+    HWND oldForeground = FocusSwatWindow();
+#endif
+#if defined(_LINUX)
+    system(SWATWCTL_FOCUS);
+#endif
+
     wrefresh(cmdWin);
     fflush(stdout);
 
@@ -3540,7 +3922,7 @@ See also:\n\
 #if defined(_MSDOS)
     Mouse_Watch();
 #endif
-    
+
     /*
      * Save old input values
      * XXX: use structure passed as opaque data to Rpc_Watch instead
@@ -3590,7 +3972,7 @@ See also:\n\
 	if (Tcl_SplitList(interp, argv[3], &numEndElts, &endList) != TCL_OK) {
 	    return(TCL_ERROR);
 	}
-	    
+
 	for (length = 0, e = 0; e < numEndElts; e++) {
 	    length += strlen(endList[e]);
 	}
@@ -3620,7 +4002,7 @@ See also:\n\
 	{
 	    return(TCL_ERROR);
 	}
-	    
+
 	for (length = 0, e = 0; e < numWordElts; e++) {
 	    length += strlen(wordList[e]);
 	}
@@ -3649,7 +4031,7 @@ See also:\n\
 	if (Tcl_SplitList(interp, argv[5], &numCleElts, &cleList) != TCL_OK) {
 	    return(TCL_ERROR);
 	}
-	
+
 	if (strlen(cleList[0]) != NUM_CLE_CHARS) {
 	    cp = defCleChars;
 	} else {
@@ -3698,8 +4080,8 @@ See also:\n\
 
     Buf_Destroy(state.input, FALSE);
 
-#if 0 
-    Buf_Destroy(cutBuf, FALSE); 
+#if 0
+    Buf_Destroy(cutBuf, FALSE);
 #endif
 
     if (state.endChars != defEndChars) {
@@ -3716,6 +4098,13 @@ See also:\n\
     inStateTop = state.next;
 
     Rpc_Pop(0);
+
+#if defined(_LINUX)
+    system(SWATWCTL_RESTORE);
+#endif
+#ifdef _WIN32
+    SwatRestoreWindow(oldForeground);
+#endif
 
     /*
      * Clear the interrrupt-pending flag to avoid annoying people
@@ -3754,11 +4143,10 @@ CursesReadChar(int 	    stream,
     char    	    buf[1];
 #endif
 
-#if defined(unix)
-    (void)read(0, (char *)data, 1);
-    chr = *(char *)data;
+#if defined(unix) || defined(_LINUX)
+    chr = getch2();
 #elif defined(_WIN32)
-    /* is this section going to work right, maybe getchar()? 
+    /* is this section going to work right, maybe getchar()?
      * same as above */
     chr = buf[0] = getch();
     if (buf[0] == '\r') {
@@ -3780,7 +4168,7 @@ CursesReadChar(int 	    stream,
 	buf[0] = '\n';
     }
     /* if the low byte is zero then we have a non-ascii value, the high byte
-     * is the scan code, so we translate the scan code into a non-ascii 
+     * is the scan code, so we translate the scan code into a non-ascii
      * value by adding 0xff
      */
     if (!buf[0])
@@ -3841,13 +4229,21 @@ See also:\n\
 {
     signed char c;
 
+#ifdef _WIN32
+    HWND oldForeground = FocusSwatWindow();
+#endif
+#if defined(_LINUX)
+    system(SWATWCTL_FOCUS);
+#endif
+
     /*
      * Make sure the screen's up-to-date
      */
     wrefresh(curWin);
     fflush(stdout);
-    
+
     Rpc_Push(0);
+
 
     Rpc_Watch(0, RPC_READABLE, CursesReadChar, (Rpc_Opaque)&c);
 #if defined(_MSDOS)
@@ -3867,7 +4263,15 @@ See also:\n\
 #if defined(_MSDOS)
     Mouse_Ignore();
 #endif
+#if defined(_LINUX)
+    system(SWATWCTL_RESTORE);
+#endif
+#ifdef _WIN32
+    SwatRestoreWindow(oldForeground);
+#endif
     Tcl_RetPrintf(interp, "%c", c);
+
+
     return(TCL_OK);
 }
 
@@ -3964,13 +4368,13 @@ See also:\n\
 
 	    if (File_CheckAbsolute(argv[1]) == FALSE) {
 		path = File_PathConcat((char *)Tcl_GetVar(interp, "file-devel-dir",
-						  TRUE), 
+						  TRUE),
 				       argv[1], 0);
 	    } else {
 		path = argv[1];
 	    }
 
-	    returnCode = FileUtil_Open(&f, path, O_WRONLY|O_TEXT|O_CREAT, 
+	    returnCode = FileUtil_Open(&f, path, O_WRONLY|O_TEXT|O_CREAT,
 				       SH_DENYWR, 0666);
 	    if (returnCode == FALSE) {
 		char errmsg[512];
@@ -3997,10 +4401,10 @@ See also:\n\
 #if defined(_WIN32)
 		for(j=0;j<COLS;j++) {
 		    if ((lp->line[j].uniChar >> 8) != 0) {
-			/* 
-			 * non-ascii unicode character 
+			/*
+			 * non-ascii unicode character
 			 */
-			asciiBuf[j] = '~';  
+			asciiBuf[j] = '~';
 		    } else {
 			asciiBuf[j] = lp->line[j].uniChar & 0xff;
 		    }
@@ -4025,10 +4429,10 @@ See also:\n\
 #if defined(_WIN32)
 		for(j=0;j<COLS;j++) {
 		    if ((cmdWin->_y[i][j].uniChar >> 8) != 0) {
-			/* 
-			 * non-ascii unicode character 
+			/*
+			 * non-ascii unicode character
 			 */
-			asciiBuf[j] = '~';  
+			asciiBuf[j] = '~';
 		    } else {
 			asciiBuf[j] = cmdWin->_y[i][j].uniChar & 0xff;
 		    }
@@ -4042,7 +4446,7 @@ See also:\n\
 		while (isspace(*--cp) && (cp > dataStart)) {
 		    ;
 		}
-		FileUtil_Write(f, dataStart, (cp - dataStart) + 1, 
+		FileUtil_Write(f, dataStart, (cp - dataStart) + 1,
 			       &numWritten);
 		FileUtil_Write(f, "\r\n", 2, &numWritten);
 	    }
@@ -4058,7 +4462,7 @@ See also:\n\
 	    if (n < LINES) {
 		n = LINES;
 	    }
-	    
+
 	    maxSaved = n;
 
 	    for (lp=lineTail; numSaved > maxSaved; lp=lineTail, numSaved--) {
@@ -4073,7 +4477,7 @@ See also:\n\
     return(TCL_OK);
 }
 
-
+#ifdef _WIN32
 /***********************************************************************
  *				CursesSLogCmd
  ***********************************************************************
@@ -4087,7 +4491,7 @@ See also:\n\
  * REVISION HISTORY:
  *	Name	Date		Description
  *	----	----		-----------
- *      kliu    10/30/96        Initial version	
+ *      kliu    10/30/96        Initial version
  *
  ***********************************************************************/
 DEFCMD(slog,CursesSLog,TCL_EXACT,NULL,top.support,
@@ -4111,13 +4515,13 @@ See also:\n\
     Stream      *stream = 0;
     ntcCell        *cp;
     int         i;
-    
+
 
     if (argc != 2) {
 	Tcl_RetPrintf(interp, wrongNumArgsString, argv[0]);
 	return (TCL_ERROR);
     }
-    
+
     stream = (Stream *)atoi(argv[1]);
     if (!VALIDTPTR(stream,TAG_STREAM)) {
 	Tcl_RetPrintf(interp, "%s: not a stream", argv[1]);
@@ -4128,12 +4532,12 @@ See also:\n\
 	Tcl_RetPrintf(interp, "%s: not a file stream", argv[1]);
 	return (TCL_ERROR);
     }
-	
+
     /*
      * Print all the lines in the buffer, trimming of any whitespace
      * at the end of each line.
      */
-    
+
     for (lp = lineTail; lp != NULL; lp = lp->prev) {
 	cp = &lp->line[COLS];
         while (isspace((*--cp).uniChar) && cp > (lp->line)) {
@@ -4141,7 +4545,7 @@ See also:\n\
 	}
 	fprintf(stream->file, "%.*s\n", cp - lp->line + 1, lp->line);
     }
-    
+
     /*
      * Ditto for those currently on-screen
      */
@@ -4150,9 +4554,10 @@ See also:\n\
 	while (isspace((*--cp).uniChar) && cp > cmdWin->_y[i]) {
 	    ;
 	}
-	
+
 	fprintf(stream->file, "%.*s\n", cp-cmdWin->_y[i] + 1, cmdWin->_y[i]);
     }
+
     return(TCL_OK);
 }
 
@@ -4188,12 +4593,12 @@ See also: \n\
 ")
 {
     LinePtr lp;
-    
+
     if (argc != 1) {
 	Tcl_RetPrintf(interp, wrongNumArgsString, argv[0]);
 	return (TCL_ERROR);
     }
-    
+
     /* free all lines in the scroll buffer */
 
     for (lp = lineTail; numSaved > 0; lp=lineTail, numSaved--) {
@@ -4204,6 +4609,7 @@ See also: \n\
     lineTail = lineHead = lineCur = NullLine;
     return (TCL_OK);
 }
+#endif
 
 
 /***********************************************************************
@@ -4251,8 +4657,35 @@ See also:\n\
 	noNL = FALSE;
     }
     for (i = 1; i < argc; i++) {
-	wprintw(curWin, "%s%s", argv[i], i == argc-1 ? "": " ");
+
+	/*
+	 * Process line by line, because internal format buffer
+	 * is limited to 512 bytes.
+	 */
+	char*		ptr = argv[i];
+	while(*ptr) {
+
+	    char*	eol = ptr;
+	    while((*eol != 0) && (*eol != '\n')) eol++;
+
+	    {
+	    	char 	saved = *eol;
+
+	    	*eol = NULL;
+	    	wprintw(curWin, ptr);
+	    	*eol = saved;
+            	ptr = eol;
+		if( *ptr != NULL ) {
+		    ptr++;
+		    waddch(curWin, '\n');
+	        }
+	    }
+        }
+	if(i != argc-1) {
+	    waddch(curWin, ' ');
+	}
     }
+
     if (!noNL) {
 	/*
 	 * Refreshes here are line-buffered. In addition, we only do the
@@ -4269,7 +4702,7 @@ See also:\n\
     }
     return (TCL_OK);
 }
-
+
 /***********************************************************************
  *				CursesSystemCmd
  ***********************************************************************
@@ -4322,7 +4755,7 @@ See also:\n\
     if (argc != 2) {
 	Tcl_Error(interp, "Usage: system <command>");
     }
-    
+
     /*
      * Take down window system...
      */
@@ -4343,7 +4776,7 @@ See also:\n\
      */
     signal(SIGTSTP, SIG_DFL);
 #endif
-    
+
     /*
      * Invoke the command
      */
@@ -4362,7 +4795,7 @@ See also:\n\
     /*
      * Catch stops again
      */
-#if defined(unix) 
+#if defined(unix)
     signal(SIGTSTP, CursesTstp);
 #endif
 
@@ -4422,7 +4855,7 @@ See also:\n\
     if (argc != 2) {
 	Tcl_Error(interp, "Usage: wcreate <height>");
     }
-    
+
     height = atoi(argv[1]);
 
     if (height <= 0) {
@@ -4455,12 +4888,12 @@ See also:\n\
 
     /*
      * It's ok to leave the cursor after the last change when refreshing this
-     * thing as it (1) draws attention to the thing and (2) makes no 
+     * thing as it (1) draws attention to the thing and (2) makes no
      * difference as any changes to it will immediately be counteracted by
      * the fetching of input from the cmdWin.
      */
     leaveok(w, TRUE);
-    
+
     malloc_settag((char *)w, TAG_CWIN);
     (void)Lst_AtEnd(windows, (LstClientData)w);
 
@@ -4476,9 +4909,9 @@ See also:\n\
 	    waddch(borderWin, '=');
 	}
     }
-    
+
     /*
-     * Make sure cmdWin is in synch so we needn't deal with firstch and 
+     * Make sure cmdWin is in synch so we needn't deal with firstch and
      * lastch
      */
     wrefresh(cmdWin);
@@ -4502,11 +4935,11 @@ See also:\n\
 		    lineTail = lineTail->prev;
 		    lineTail->next = NullLine;
 		}
-		
+
 		lp->line = cmdWin->_y[i];
 		lp->prev = NullLine;
 		lp->next = lineHead;
-		
+
 		if (lineTail != NullLine) {
 		    lineHead->prev = lp;
 		    lineHead = lp;
@@ -4558,9 +4991,9 @@ See also:\n\
 	 */
 	mvwin(borderWin, cmdWin->_maxy, 0);
     }
-    
+
     cmdWin->_flags &= ~_FULLWIN;
-    
+
     wrefresh(borderWin);
     /*
      * Make sure the whole thing is updated when the window is first
@@ -4580,7 +5013,7 @@ See also:\n\
  * RETURN:	    token for window
  * SIDE EFFECTS:    none
  *
- * STRATEGY:	    
+ * STRATEGY:
  *
  * REVISION HISTORY:
  *	Name	Date		Description
@@ -4616,7 +5049,7 @@ See also:\n\
 
     x = cvtnum(argv[1], NULL);
     y = cvtnum(argv[2], NULL);
-    
+
 #define InWindow(w,x,y) \
     (((w)->_begx <= (x) && (x) < (w)->_begx + (w)->_maxx) && \
      ((w)->_begy <= (y) && (y) < (w)->_begy + (w)->_maxy))
@@ -4641,7 +5074,7 @@ See also:\n\
     Tcl_Return(interp, NULL, TCL_STATIC);
     return(TCL_OK);
 }
-	
+
 
 /***********************************************************************
  *				CursesWDimCmd
@@ -4651,7 +5084,7 @@ See also:\n\
  * RETURN:	    origin + width/height
  * SIDE EFFECTS:    none
  *
- * STRATEGY:	    
+ * STRATEGY:
  *
  * REVISION HISTORY:
  *	Name	Date		Description
@@ -4680,7 +5113,7 @@ See also:\n\
 ")
 {
     WINDOW  *w;
-    
+
     if (argc != 2) {
 	Tcl_Error(interp, "Usage: wdim <window>");
     }
@@ -4764,7 +5197,7 @@ See also:\n\
 
     wln = Lst_Member(windows, (LstClientData)w);
     assert(wln != NILLNODE);
-    
+
     wrefresh(cmdWin);
 
     /*
@@ -4775,7 +5208,7 @@ See also:\n\
 	delwin(w);
 	for (ln = Lst_Succ(wln); ln != NILLNODE; ln = Lst_Succ(ln)) {
 	    w = (WINDOW *)Lst_Datum(ln);
-	    
+
 	    mvwin(w, y, 0);
 	    wrefresh(w);
 	    y += w->_maxy;
@@ -4786,9 +5219,9 @@ See also:\n\
 	/*
 	 * So, do we have a highlight onscreen?
 	 */
-	if (CursesConvertMouseHighlightToCoords(&startX, 
-						&startY, 
-						&endX, 
+	if (CursesConvertMouseHighlightToCoords(&startX,
+						&startY,
+						&endX,
 						&endY) != (char *) NULL) {
 	    /*
 	     * Yes. Set the amount by which we will adjust the highlight if
@@ -4828,7 +5261,7 @@ See also:\n\
 	    wrefresh(w);
 	}
     }
-    
+
     Lst_Remove(windows, wln);
     if (!Lst_IsEmpty(windows)) {
 	/*
@@ -4859,18 +5292,18 @@ See also:\n\
 	/*
 	 * Shift the lines up to make room at the top.
 	 */
-	bcopy((char *)&cmdWin->_y[0], (char *)&cmdWin->_y[i], 
+	bcopy((char *)&cmdWin->_y[0], (char *)&cmdWin->_y[i],
 	      cmdWin->_maxy * sizeof(cursesChar *));
 	cmdWin->_maxy += i;
 	cmdWin->_cury += i;
-	
+
 	for (lp = lineHead, i--; i >= 0; i--, lp = lineHead) {
 	    cmdWin->_y[i] = lp->line;
 	    touchline(cmdWin,i,0,cmdWin->_maxx-1);
 	    lineHead = lineHead->next;
 	    free((char *)lp);
 	}
-	
+
     } else {
 
 	i = y - cmdWin->_maxy;
@@ -4915,7 +5348,7 @@ See also:\n\
 		 */
 		scrollnow_hideMouse(cmdWin,-1);
 		/*
-		 * Replace first line with saved line and force complete 
+		 * Replace first line with saved line and force complete
 		 * update.
 		 */
 		cmdWin->_y[0] = lp->line;
@@ -4966,7 +5399,7 @@ See also:\n\
     if (lineHead == NullLine) {
 	lineTail = NullLine;
     }
-    
+
     wrefresh(cmdWin);
     return(TCL_OK);
 }
@@ -5295,7 +5728,7 @@ See also:\n\
 {
     Boolean	    nWOT;
 
-#if !defined(_WIN32)
+#if !defined(_WIN32) && !defined(__WATCOMC__)
     extern int	    _putchar(char c);
 #endif
     LstNode 	    ln;
@@ -5307,14 +5740,14 @@ See also:\n\
     }
 
     nWOT = atoi(argv[1]);
-    
+
     if (Lst_IsEmpty(windows) || (windowsOnTop == nWOT)) {
 	windowsOnTop = nWOT;
     } else if (nWOT) {
 #if defined(unix)
 	if (AL || AL_PARM) {
 	    int     i;
-	    char    **savey = (char **)malloc((LINES-cmdWin->_maxy) 
+	    char    **savey = (char **)malloc((LINES-cmdWin->_maxy)
 						 * sizeof(cursesChar));
 	    /*
 	     * Move to upper-left corner of the screen for shiftage of cmdWin
@@ -5334,7 +5767,7 @@ See also:\n\
 		/*
 		 * Insert the lines one at a time...
 		 */
-		
+
 		for (i = LINES - cmdWin->_maxy; i > 0; i--) {
 		    _puts(AL);
 		}
@@ -5376,7 +5809,7 @@ See also:\n\
 	 * Move the windows into position from the top down.
 	 */
 	y = 0;
-	
+
 	for (ln = Lst_First(windows); ln != NILLNODE; ln = Lst_Succ(ln)) {
 	    w = (WINDOW *)Lst_Datum(ln);
 	    mvwin(w, y, 0);
@@ -5407,7 +5840,7 @@ See also:\n\
 		/*
 		 * Nuke the lines o n e  b y  o n e .
 		 */
-		
+
 		for (i = LINES - cmdWin->_maxy; i > 0; i--) {
 		    _puts(DL);
 		}
@@ -5449,7 +5882,7 @@ See also:\n\
 	 * Move the windows into position from the bottom up.
 	 */
 	y = LINES;
-	
+
 	for (ln = Lst_First(windows); ln != NILLNODE; ln = Lst_Succ(ln)) {
 	    w = (WINDOW *)Lst_Datum(ln);
 	    y -= w->_maxy;
@@ -5466,12 +5899,12 @@ See also:\n\
 /***********************************************************************
  *				CursesCmdWinCmd
  ***********************************************************************
- * SYNOPSIS:	    
- * CALLED BY:	    
- * RETURN:	    
- * SIDE EFFECTS:    
+ * SYNOPSIS:
+ * CALLED BY:
+ * RETURN:
+ * SIDE EFFECTS:
  *
- * STRATEGY:	    
+ * STRATEGY:
  *
  * REVISION HISTORY:
  *	Name	Date		Description
@@ -5651,15 +6084,15 @@ CursesExit(void)
  *			DssLowCmd
  *********************************************************************
  * SYNOPSIS: C implementation for guts of dss display command
- * CALLED BY:	
+ * CALLED BY:
  * RETURN:
  * SIDE EFFECTS:
  * STRATEGY:
  * REVISION HISTORY:
- *	Name	Date		Description			     
- *	----	----		-----------			     
- *	jimmy	1/13/94		Initial version			     
- * 
+ *	Name	Date		Description
+ *	----	----		-----------
+ *	jimmy	1/13/94		Initial version
+ *
  *********************************************************************/
 DEFCMD(dss_low, DssLow,TCL_EXACT,NULL,swat_prog.patient,
 "")
@@ -5676,7 +6109,7 @@ DEFCMD(dss_low, DssLow,TCL_EXACT,NULL,swat_prog.patient,
 #endif
 
     /* do the display stuff in C for speed */
-    
+
     if (argc != 8)
     {
 	Tcl_RetPrintf(interp, wrongNumArgsString, argv[0]);
@@ -5694,12 +6127,12 @@ DEFCMD(dss_low, DssLow,TCL_EXACT,NULL,swat_prog.patient,
 
     notdocwin = strcmp(srcwinmode, "_docwin") ? 6 : 0;
 
-    screen_text = (cursesChar *)malloc(sizeof(cursesChar) * 
+    screen_text = (cursesChar *)malloc(sizeof(cursesChar) *
 				       (lines * COLS + 1));
 #if defined(_WIN32)
-    screen_text_dblByte = (unsigned short *)malloc(sizeof(unsigned short) * 
+    screen_text_dblByte = (unsigned short *)malloc(sizeof(unsigned short) *
 						   (lines * COLS + 1));
-    returnVal = Src_ReadLine(interp, curfile, argv[2], argv[1], 
+    returnVal = Src_ReadLine(interp, curfile, argv[2], argv[1],
 			     NULL, screen_text_dblByte);
     (void *)makeNtcCell(&sample, ' ');
     for(i=0; i<(lines * COLS); i++) {
@@ -5708,10 +6141,10 @@ DEFCMD(dss_low, DssLow,TCL_EXACT,NULL,swat_prog.patient,
     }
     free((void *)screen_text_dblByte);
 #else
-    returnVal = Src_ReadLine(interp, curfile, argv[2], argv[1], 
+    returnVal = Src_ReadLine(interp, curfile, argv[2], argv[1],
 			     screen_text, NULL);
 #endif
-    /* 
+    /*
      * put a null terminator at the end to prevent wandering off into
      * space
      */
@@ -5731,18 +6164,20 @@ DEFCMD(dss_low, DssLow,TCL_EXACT,NULL,swat_prog.patient,
     wclear(curWin);
     wprintw(curWin, "View file %s\n", curfile);
 #endif
-    /* 
+    /*
      * do one line at time so we can prevent wrapping and highlight current
      * line that set breakpoints by line number
      */
     for(lineCount = lines; lineCount > 0; lineCount--, start++) {
 	cursesChar	temp;
 	int 		count, newline;
-	cursesChar	tbuf[180];
+	cursesChar	tbuf[1024];
 	int	 	tcount;
 
 	count = 0;
 	cp = curline;
+
+	memset(tbuf, ' ', sizeof(tbuf));
 
 	while(count < COLS + curcol) {
 	    if (EQUAL_CHARS(*cp, '\0') == TRUE) {
@@ -5750,7 +6185,7 @@ DEFCMD(dss_low, DssLow,TCL_EXACT,NULL,swat_prog.patient,
 		break;
 	    }
 	    if (EQUAL_CHARS(*cp, '\011') == TRUE) {
-		for (tcount = (8 - (count & 07)); 
+		for (tcount = (8 - (count & 07));
 		     (tcount > 0) && (count < COLS + curcol);
 		     tcount--)
 		{
@@ -5760,7 +6195,7 @@ DEFCMD(dss_low, DssLow,TCL_EXACT,NULL,swat_prog.patient,
 	    } else {
 #if !defined(_WIN32)
 		ASSIGN_CHAR_W_VAR(tbuf[count], *cp);
-#else 
+#else
 		if ((cp->uniChar >> 8) != 0) {
 		    /*
 		     * sjis character - make sure we have room for both
@@ -5794,8 +6229,8 @@ DEFCMD(dss_low, DssLow,TCL_EXACT,NULL,swat_prog.patient,
 		goto all_done;
 	    }
 	    if(EQUAL_CHARS(*cp, '\012') == TRUE) {
-		/* 
-		 * if there is, print a newline and go to next line 
+		/*
+		 * if there is, print a newline and go to next line
 		 */
 	        if (notdocwin) {
 		    wprintw(curWin, "%4d: \n", start);
@@ -5812,8 +6247,8 @@ DEFCMD(dss_low, DssLow,TCL_EXACT,NULL,swat_prog.patient,
 	    cp++;
 	}
 	if (newline) {
-	    /* 
-	     * we found a newline so go back to top of loop 
+	    /*
+	     * we found a newline so go back to top of loop
 	     */
 	    continue;
 	}
@@ -5821,6 +6256,7 @@ DEFCMD(dss_low, DssLow,TCL_EXACT,NULL,swat_prog.patient,
 
 	while ((EQUAL_CHARS(*cp, '\0') == FALSE) &&
 	       (EQUAL_CHARS(*cp, '\012') == FALSE) &&
+	       (EQUAL_CHARS(*cp, '\r') == FALSE) &&
 	       (count < (COLS - (notdocwin + 1))))
 	{
 	    cp++;
@@ -5829,8 +6265,8 @@ DEFCMD(dss_low, DssLow,TCL_EXACT,NULL,swat_prog.patient,
 	ASSIGN_CHAR_W_VAR(temp, *cp);
 	ASSIGN_CHAR_W_CONST(*cp, '\0');
 
-	/* 
-	 * output as much as we can 
+	/*
+	 * output as much as we can
 	 */
 	if (notdocwin) {
 	    wprintw(curWin, "%4d: ", start);
@@ -5842,19 +6278,19 @@ DEFCMD(dss_low, DssLow,TCL_EXACT,NULL,swat_prog.patient,
 	} else {
 	    WPRINTW(curWin, "%s\n", tbuf+curcol);
 	}
-	/* 
-	 * check to see if we are done 
+	/*
+	 * check to see if we are done
 	 */
 	if (EQUAL_CHARS(temp, '\0') == TRUE) {
 	    break;
 	}
-	/* 
-	 * if not, replace the character we biffed 
+	/*
+	 * if not, replace the character we biffed
 	 */
 	ASSIGN_CHAR_W_VAR(*cp, temp);
 	cp = curline;
 	/* now get to the start of the next line */
-	while((EQUAL_CHARS(*cp, '\0') == FALSE) 
+	while((EQUAL_CHARS(*cp, '\0') == FALSE)
 	      && (EQUAL_CHARS(*cp, '\012') == FALSE))
 	{
 	    cp++;
@@ -5867,12 +6303,12 @@ DEFCMD(dss_low, DssLow,TCL_EXACT,NULL,swat_prog.patient,
 	curline = cp;
     }
 all_done:
-    if ((EQUAL_CHARS(*cp, '\0') == TRUE) 
+    if ((EQUAL_CHARS(*cp, '\0') == TRUE)
 	&& (cp == &screen_text[lines * COLS])
-	&& (lineCount > 0)) 
+	&& (lineCount > 0))
     {
 	WPRINTW(curWin, "...\n");
-    }    
+    }
 
     free((void *)screen_text);
     Tcl_Return(interp, "", TCL_STATIC);
@@ -5890,7 +6326,7 @@ all_done:
  * SIDE EFFECTS:    inStateTop eventually set to 0 again
  *	    	    input buffers freed
  *
- * STRATEGY:	    
+ * STRATEGY:
  *
  * REVISION HISTORY:
  *	Name	Date		Description
@@ -5906,7 +6342,7 @@ CursesResetInput(Event event, Opaque callData, Opaque clientData)
      */
     while (inStateTop != 0) {
 	CursesInputState    *state;
-	
+
 	state = inStateTop;
 	inStateTop = state->next;
 
@@ -6040,7 +6476,7 @@ Curses_Init(void)
 	 * Set up vectors for other folks to use
 	 */
 	Event_Handle(EVENT_RESET, 0, CursesResetInput, NullOpaque);
-	
+
 	Message = CursesMessage;
 	Warning = CursesWarning;
 	MessageFlush = CursesMessageFlush;
@@ -6059,8 +6495,8 @@ Curses_Init(void)
 	Cmd_Create(&CursesEchoCmdRec);
 	Cmd_Create(&CursesSystemCmdRec);
 	Cmd_Create(&CursesSaveCmdRec);
-	Cmd_Create(&CursesSLogCmdRec);
-	Cmd_Create(&CursesSBClrCmdRec);
+	/*Cmd_Create(&CursesSLogCmdRec);*/
+	/*Cmd_Create(&CursesSBClrCmdRec);*/
 	Cmd_Create(&CursesWCreateCmdRec);
 	Cmd_Create(&CursesWDeleteCmdRec);
 	Cmd_Create(&CursesWPushCmdRec);
@@ -6090,9 +6526,3 @@ Curses_Init(void)
 	Tcl_SetVar(interp, "window-system", "curses", TRUE);
     }
 }
-
-
-
-
-
-
